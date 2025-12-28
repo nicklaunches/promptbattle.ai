@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Magnet & Iron Filings Simulation</title>
+        <style>
+            body {
+                margin: 0;
+                background: #f8e4c8;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                flex-direction: column;
+            }
+            canvas {
+                background: #fff8e8;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+                border-radius: 8px;
+            }
+            button {
+                margin-top: 20px;
+                padding: 12px 24px;
+                font-size: 18px;
+                background: #ff6600;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            }
+            button:hover {
+                background: #ff8800;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="c" width="800" height="600"></canvas>
+        <button id="reverse">Reverse Polarity</button>
+
+        <script>
+            const canvas = document.getElementById("c");
+            const ctx = canvas.getContext("2d");
+            const btn = document.getElementById("reverse");
+
+            let magnetX = -150; // start off-screen left
+            let magnetY = canvas.height / 2;
+            let targetX = canvas.width / 2;
+            const magnetWidth = 120;
+            const magnetHeight = 60;
+            let polarity = 1; // 1 = N right, S left; -1 = flipped
+
+            // Hundreds of tiny filings (needles)
+            const numFilings = 600;
+            const filings = [];
+            for (let i = 0; i < numFilings; i++) {
+                filings.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    angle: Math.random() * Math.PI * 2,
+                    length: 12 + Math.random() * 8, // short needles
+                });
+            }
+
+            let dragging = false;
+            canvas.addEventListener("mousedown", (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                if (
+                    mx > magnetX - magnetWidth / 2 &&
+                    mx < magnetX + magnetWidth / 2 &&
+                    my > magnetY - magnetHeight / 2 &&
+                    my < magnetY + magnetHeight / 2
+                ) {
+                    dragging = true;
+                }
+            });
+            canvas.addEventListener("mousemove", (e) => {
+                if (dragging) {
+                    const rect = canvas.getBoundingClientRect();
+                    magnetX = e.clientX - rect.left;
+                    magnetY = e.clientY - rect.top;
+                    targetX = magnetX; // instant follow
+                }
+            });
+            canvas.addEventListener("mouseup", () => (dragging = false));
+            canvas.addEventListener("mouseleave", () => (dragging = false));
+
+            btn.addEventListener("click", () => (polarity *= -1));
+
+            // Simple dipole field approximation (bar magnet)
+            function getFieldAt(x, y) {
+                const poleDist = (magnetWidth / 2) * 0.8;
+                const p1x = magnetX - poleDist * polarity;
+                const p1y = magnetY;
+                const p2x = magnetX + poleDist * polarity;
+                const p2y = magnetY;
+
+                const dx1 = x - p1x;
+                const dy1 = y - p1y;
+                const r12 = dx1 * dx1 + dy1 * dy1 + 10; // epsilon
+                const bx1 = (polarity * dx1) / (r12 * Math.sqrt(r12));
+                const by1 = (polarity * dy1) / (r12 * Math.sqrt(r12));
+
+                const dx2 = x - p2x;
+                const dy2 = y - p2y;
+                const r22 = dx2 * dx2 + dy2 * dy2 + 10;
+                const bx2 = (-polarity * dx2) / (r22 * Math.sqrt(r22));
+                const by2 = (-polarity * dy2) / (r22 * Math.sqrt(r22));
+
+                return { bx: bx1 + bx2, by: by1 + by2 };
+            }
+
+            function animate() {
+                // Slide-in entrance
+                if (magnetX < targetX) {
+                    magnetX += (targetX - magnetX) * 0.15;
+                    if (Math.abs(targetX - magnetX) < 1) magnetX = targetX;
+                }
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Update filings orientation
+                filings.forEach((f) => {
+                    const field = getFieldAt(f.x, f.y);
+                    const targetAngle = Math.atan2(field.by, field.bx);
+                    // Smooth rotation
+                    let da = targetAngle - f.angle;
+                    while (da > Math.PI) da -= 2 * Math.PI;
+                    while (da < -Math.PI) da += 2 * Math.PI;
+                    f.angle += da * 0.15; // inertia feel
+                });
+
+                // Draw filings (black ink with orange tint on strong field)
+                filings.forEach((f) => {
+                    const field = getFieldAt(f.x, f.y);
+                    const strength = Math.sqrt(
+                        field.bx * field.bx + field.by * field.by
+                    );
+                    const intensity = Math.min(strength * 20, 1);
+
+                    ctx.save();
+                    ctx.translate(f.x, f.y);
+                    ctx.rotate(f.angle);
+                    ctx.strokeStyle = `rgba(0,0,0,${0.7 + 0.3 * intensity})`;
+                    ctx.lineWidth = 1.5 + intensity;
+                    ctx.beginPath();
+                    ctx.moveTo(-f.length / 2, 0);
+                    ctx.lineTo(f.length / 2, 0);
+                    ctx.stroke();
+
+                    // Orange glow on tips when strong
+                    if (intensity > 0.4) {
+                        ctx.strokeStyle = `rgba(255,102,0,${intensity - 0.3})`;
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                });
+
+                // Draw magnet (retro red with N/S labels)
+                const grad = ctx.createLinearGradient(
+                    magnetX - magnetWidth / 2,
+                    0,
+                    magnetX + magnetWidth / 2,
+                    0
+                );
+                if (polarity > 0) {
+                    grad.addColorStop(0, "#ff4444");
+                    grad.addColorStop(1, "#aa0000");
+                } else {
+                    grad.addColorStop(0, "#aa0000");
+                    grad.addColorStop(1, "#ff4444");
+                }
+                ctx.fillStyle = grad;
+                ctx.fillRect(
+                    magnetX - magnetWidth / 2,
+                    magnetY - magnetHeight / 2,
+                    magnetWidth,
+                    magnetHeight
+                );
+
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(
+                    magnetX - magnetWidth / 2,
+                    magnetY - magnetHeight / 2,
+                    magnetWidth,
+                    magnetHeight
+                );
+
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 28px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                if (polarity > 0) {
+                    ctx.fillText("S", magnetX - magnetWidth / 4, magnetY);
+                    ctx.fillText("N", magnetX + magnetWidth / 4, magnetY);
+                } else {
+                    ctx.fillText("N", magnetX - magnetWidth / 4, magnetY);
+                    ctx.fillText("S", magnetX + magnetWidth / 4, magnetY);
+                }
+
+                requestAnimationFrame(animate);
+            }
+
+            animate();
+        </script>
+    </body>
+</html>

@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Magnet Field Play</title>
+  <style>
+    :root {
+      --paper: #f5eddc;
+      --paper-shadow: #e6decf;
+      --ink: #11100c;
+      --accent: #ff7a3c;
+      --accent-soft: #ffc48a;
+      --shadow: rgba(0, 0, 0, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Avenir Next", "Futura", "Trebuchet MS", "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+
+    .controls {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 2;
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: 2px solid var(--ink);
+      background: var(--accent);
+      color: var(--ink);
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      border-radius: 10px;
+      box-shadow: 4px 4px 0 var(--ink), 8px 8px 0 rgba(0, 0, 0, 0.1);
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+
+    button:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 5px 5px 0 var(--ink), 9px 9px 0 rgba(0, 0, 0, 0.1);
+      background: #ff8d55;
+    }
+
+    button:active {
+      transform: translate(1px, 1px);
+      box-shadow: 3px 3px 0 var(--ink);
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    canvas.dragging {
+      cursor: grabbing;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button id="flip">Reverse polarity</button>
+  </div>
+  <canvas id="field" aria-label="Magnet field simulation"></canvas>
+  <script>
+    (() => {
+      const canvas = document.getElementById('field');
+      const ctx = canvas.getContext('2d');
+      const flipBtn = document.getElementById('flip');
+      const colors = {
+        paper: getComputedStyle(document.documentElement).getPropertyValue('--paper').trim(),
+        paperShadow: getComputedStyle(document.documentElement).getPropertyValue('--paper-shadow').trim(),
+        ink: getComputedStyle(document.documentElement).getPropertyValue('--ink').trim(),
+        accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+        accentSoft: getComputedStyle(document.documentElement).getPropertyValue('--accent-soft').trim(),
+        shadow: getComputedStyle(document.documentElement).getPropertyValue('--shadow').trim(),
+      };
+
+      const filings = [];
+      const magnet = {
+        width: 200,
+        height: 64,
+        x: 0,
+        y: 0,
+        startX: -220,
+        targetX: 0,
+        slideStart: performance.now(),
+        slideDuration: 900,
+        slideProgress: 0,
+        polarity: 1,
+        dragging: false,
+        dragOffsetX: 0,
+        dragOffsetY: 0,
+        manuallyPlaced: false,
+        flash: 0,
+        initialized: false,
+      };
+
+      let width = 0;
+      let height = 0;
+      const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+      const paperPattern = createPaperGrain();
+
+      setSize();
+      window.addEventListener('resize', setSize);
+      canvas.addEventListener('pointerdown', pointerDown);
+      window.addEventListener('pointermove', pointerMove);
+      window.addEventListener('pointerup', pointerUp);
+      window.addEventListener('pointercancel', pointerUp);
+      flipBtn.addEventListener('click', flipPolarity);
+
+      let last = performance.now();
+      requestAnimationFrame(loop);
+
+      function loop(now) {
+        const dt = now - last;
+        last = now;
+        updateMagnet(now);
+        updateFilings(dt);
+        drawScene();
+        requestAnimationFrame(loop);
+      }
+
+      function setSize() {
+        const prevW = width || window.innerWidth;
+        const prevH = height || window.innerHeight;
+        width = window.innerWidth;
+        height = window.innerHeight;
+
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const first = !magnet.initialized;
+        if (first) {
+          magnet.y = height * 0.55;
+          magnet.targetX = width * 0.35;
+          magnet.startX = -magnet.width * 1.4;
+          magnet.x = magnet.startX;
+          magnet.slideStart = performance.now();
+          magnet.slideProgress = 0;
+          magnet.initialized = true;
+        } else if (!magnet.dragging) {
+          const ratioX = width / prevW;
+          const ratioY = height / prevH;
+          magnet.x = clamp(magnet.x * ratioX, magnet.width * 0.5 + 12, width - magnet.width * 0.5 - 12);
+          magnet.y = clamp(magnet.y * ratioY, magnet.height * 0.5 + 12, height - magnet.height * 0.5 - 12);
+          magnet.targetX = clamp(magnet.targetX * ratioX, magnet.width * 0.6, width - magnet.width * 0.6);
+        }
+
+        rebuildFilings();
+      }
+
+      function rebuildFilings() {
+        filings.length = 0;
+        const target = Math.max(420, Math.min(900, Math.floor(width * height * 0.00045)));
+        const spacing = Math.sqrt((width * height) / target) * 0.9;
+        for (let y = spacing * 0.6; y < height - spacing * 0.4; y += spacing) {
+          for (let x = spacing * 0.6; x < width - spacing * 0.4; x += spacing) {
+            if (filings.length >= target) break;
+            const jitter = spacing * 0.4;
+            const px = x + (Math.random() - 0.5) * jitter;
+            const py = y + (Math.random() - 0.5) * jitter;
+            if (Math.abs(px - magnet.x) < magnet.width * 0.45 && Math.abs(py - magnet.y) < magnet.height * 0.9) continue;
+            filings.push({
+              x: px,
+              y: py,
+              angle: Math.random() * Math.PI * 2,
+              len: 8 + Math.random() * 5,
+              weight: 1 + Math.random() * 0.7,
+              lag: 0.08 + Math.random() * 0.08,
+              wobble: (Math.random() - 0.5) * 0.25,
+            });
+          }
+        }
+      }
+
+      function createPaperGrain() {
+        const g = document.createElement('canvas');
+        g.width = g.height = 120;
+        const gctx = g.getContext('2d');
+        gctx.fillStyle = colors.paper;
+        gctx.fillRect(0, 0, g.width, g.height);
+        for (let i = 0; i < 220; i += 1) {
+          gctx.fillStyle = `rgba(0, 0, 0, ${Math.random() * 0.05})`;
+          gctx.fillRect(Math.random() * g.width, Math.random() * g.height, 1, 1);
+        }
+        return ctx.createPattern(g, 'repeat');
+      }
+
+      function pointerPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+      }
+
+      function pointerDown(e) {
+        const pos = pointerPos(e);
+        if (!hitMagnet(pos.x, pos.y)) return;
+        magnet.dragging = true;
+        magnet.manuallyPlaced = true;
+        magnet.slideProgress = 1;
+        magnet.dragOffsetX = pos.x - magnet.x;
+        magnet.dragOffsetY = pos.y - magnet.y;
+        canvas.classList.add('dragging');
+      }
+
+      function pointerMove(e) {
+        if (!magnet.dragging) return;
+        const pos = pointerPos(e);
+        const margin = 24;
+        magnet.x = clamp(pos.x - magnet.dragOffsetX, magnet.width * 0.5 + margin, width - magnet.width * 0.5 - margin);
+        magnet.y = clamp(pos.y - magnet.dragOffsetY, magnet.height * 0.5 + margin, height - magnet.height * 0.5 - margin);
+        magnet.targetX = magnet.x;
+      }
+
+      function pointerUp() {
+        if (!magnet.dragging) return;
+        magnet.dragging = false;
+        canvas.classList.remove('dragging');
+      }
+
+      function flipPolarity() {
+        magnet.polarity *= -1;
+        magnet.flash = 1;
+      }
+
+      function hitMagnet(px, py) {
+        return Math.abs(px - magnet.x) <= magnet.width * 0.55 && Math.abs(py - magnet.y) <= magnet.height * 0.65;
+      }
+
+      function updateMagnet(now) {
+        if (!magnet.dragging && magnet.slideProgress < 1) {
+          const t = clamp((now - magnet.slideStart) / magnet.slideDuration, 0, 1);
+          magnet.slideProgress = t;
+          const eased = 1 - Math.pow(1 - t, 3);
+          magnet.x = magnet.startX + (magnet.targetX - magnet.startX) * eased;
+        }
+        if (magnet.flash > 0) {
+          magnet.flash = Math.max(0, magnet.flash - 0.03);
+        }
+      }
+
+      function updateFilings() {
+        for (const f of filings) {
+          const v = fieldVector(f.x, f.y);
+          const desired = Math.atan2(v.y, v.x) + f.wobble * 0.1;
+          if (Number.isNaN(desired)) continue;
+          let delta = desired - f.angle;
+          delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+          const proximity = clamp(220 / Math.hypot(f.x - magnet.x, f.y - magnet.y), 0.35, 1.6);
+          const follow = 0.12 + f.lag * 0.7;
+          f.angle += delta * follow * proximity;
+        }
+      }
+
+      function fieldVector(px, py) {
+        const poleOffset = magnet.width * 0.36;
+        const softness = 18;
+        let vx = 0;
+        let vy = 0;
+        const poles = [
+          { x: magnet.x - poleOffset, y: magnet.y, sign: magnet.polarity },
+          { x: magnet.x + poleOffset, y: magnet.y, sign: -magnet.polarity },
+        ];
+        for (const p of poles) {
+          const dx = px - p.x;
+          const dy = py - p.y;
+          const distSq = dx * dx + dy * dy + softness * softness;
+          const dist = Math.sqrt(distSq);
+          const force = p.sign / (distSq * dist);
+          vx += dx * force;
+          vy += dy * force;
+        }
+        vx += (px - width * 0.5) * 1e-6;
+        vy += (py - height * 0.5) * 1e-6;
+        return { x: vx, y: vy };
+      }
+
+      function drawScene() {
+        drawBackground();
+        drawFilings();
+        drawMagnet();
+      }
+
+      function drawBackground() {
+        ctx.fillStyle = colors.paper;
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.save();
+        ctx.globalAlpha = 0.65;
+        ctx.fillStyle = paperPattern;
+        ctx.fillRect(0, 0, width, height);
+        ctx.restore();
+
+        const glow = ctx.createLinearGradient(0, 0, width, height);
+        glow.addColorStop(0, 'rgba(255, 255, 255, 0.32)');
+        glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, width, height);
+
+        const vignette = ctx.createRadialGradient(
+          width / 2,
+          height / 2,
+          Math.min(width, height) * 0.3,
+          width / 2,
+          height / 2,
+          Math.max(width, height) * 0.9
+        );
+        vignette.addColorStop(0, 'rgba(0,0,0,0)');
+        vignette.addColorStop(1, 'rgba(0,0,0,0.08)');
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      function drawFilings() {
+        ctx.save();
+        ctx.lineCap = 'round';
+        for (const f of filings) {
+          ctx.strokeStyle = `rgba(17, 16, 12, ${0.68 + (f.weight - 1) * 0.15})`;
+          ctx.lineWidth = f.weight;
+          const half = f.len * 0.5;
+          const cx = Math.cos(f.angle);
+          const sy = Math.sin(f.angle);
+          ctx.beginPath();
+          ctx.moveTo(f.x - cx * half, f.y - sy * half);
+          ctx.lineTo(f.x + cx * half, f.y + sy * half);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawMagnet() {
+        const w = magnet.width;
+        const h = magnet.height;
+        const left = magnet.x - w / 2;
+        const top = magnet.y - h / 2;
+        const leftColor = magnet.polarity > 0 ? colors.accent : colors.accentSoft;
+        const rightColor = magnet.polarity > 0 ? colors.accentSoft : colors.accent;
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.18)';
+        ctx.shadowBlur = 14;
+        ctx.shadowOffsetY = 8;
+        drawRoundedRectPath(left, top + 2, w, h, 12);
+        ctx.fillStyle = colors.paperShadow;
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+
+        drawRoundedRectPath(left, top, w, h, 12);
+        ctx.save();
+        ctx.clip();
+        ctx.fillStyle = leftColor;
+        ctx.fillRect(left, top, w / 2, h);
+        ctx.fillStyle = rightColor;
+        ctx.fillRect(left + w / 2, top, w / 2, h);
+        ctx.restore();
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = colors.ink;
+        drawRoundedRectPath(left, top, w, h, 12);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(magnet.x, top + 4);
+        ctx.lineTo(magnet.x, top + h - 4);
+        ctx.stroke();
+
+        ctx.fillStyle = colors.ink;
+        ctx.font = '600 15px "Avenir Next", "Futura", "Trebuchet MS", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(magnet.polarity > 0 ? 'N' : 'S', left + w * 0.22, magnet.y);
+        ctx.fillText(magnet.polarity > 0 ? 'S' : 'N', left + w * 0.78, magnet.y);
+
+        if (magnet.flash > 0) {
+          ctx.globalAlpha = magnet.flash * 0.5;
+          ctx.fillStyle = '#ffffff';
+          drawRoundedRectPath(left, top, w, h, 12);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+      }
+
+      function drawRoundedRectPath(x, y, w, h, r) {
+        const rr = Math.min(r, Math.min(w, h) / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.lineTo(x + w - rr, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+        ctx.lineTo(x + w, y + h - rr);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+        ctx.lineTo(x + rr, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+        ctx.lineTo(x, y + rr);
+        ctx.quadraticCurveTo(x, y, x + rr, y);
+        ctx.closePath();
+      }
+
+      function clamp(v, min, max) {
+        return Math.min(Math.max(v, min), max);
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Magnet Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #f0e6d2; /* Warm paper */
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            /* Subtle paper texture effect using a radial gradient */
+            background-image: radial-gradient(#e6dac3 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+
+        button {
+            background-color: #ff6600; /* Punchy orange */
+            color: #1a1a1a;
+            border: 3px solid #1a1a1a;
+            padding: 12px 24px;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: inherit;
+            cursor: pointer;
+            box-shadow: 4px 4px 0px #1a1a1a;
+            transition: transform 0.1s, box-shadow 0.1s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0px #1a1a1a;
+        }
+
+        button:hover {
+            background-color: #ff8533;
+        }
+
+        .instruction {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #1a1a1a;
+            font-weight: bold;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <div class="instruction">DRAG THE MAGNET</div>
+        <canvas id="simCanvas"></canvas>
+        <div id="controls">
+            <button id="polarityBtn">Reverse Polarity</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const polarityBtn = document.getElementById('polarityBtn');
+
+        let width, height;
+
+        // Configuration
+        const FILING_COUNT = 800;
+        const FILING_SIZE = 12;
+        const MAGNET_WIDTH = 160;
+        const MAGNET_HEIGHT = 60;
+        const POLE_OFFSET = 60; // Distance of poles from center
+
+        // State
+        const filings = [];
+        const magnet = {
+            x: -200, // Start off-screen
+            y: 0,
+            targetX: 0, // Will be set to center
+            targetY: 0,
+            polarity: 1, // 1: N-S, -1: S-N
+            isDragging: false,
+            dragOffsetX: 0,
+            dragOffsetY: 0,
+            slideInComplete: false
+        };
+
+        // Setup
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+
+            if (!magnet.slideInComplete) {
+                magnet.y = height / 2;
+                magnet.targetX = width / 2;
+                magnet.targetY = height / 2;
+            }
+        }
+
+        class Filing {
+            constructor() {
+                this.x = Math.random() * window.innerWidth;
+                this.y = Math.random() * window.innerHeight;
+                this.angle = Math.random() * Math.PI * 2;
+                this.targetAngle = 0;
+            }
+
+            update(magnetX, magnetY, polarity) {
+                // Calculate field
+                // Model magnet as two monopoles
+                const poleDist = POLE_OFFSET;
+
+                // North Pole position (relative to magnet center)
+                // If polarity is 1, N is right, S is left (standard bar magnet drawing usually has N on one side)
+                // Let's say Polarity 1: [S | N] -> N is at +x, S is at -x relative to center
+                const nX = magnetX + (poleDist * polarity);
+                const nY = magnetY;
+
+                const sX = magnetX - (poleDist * polarity);
+                const sY = magnetY;
+
+                // Vector from N pole to filing
+                const dxN = this.x - nX;
+                const dyN = this.y - nY;
+                const distN2 = dxN * dxN + dyN * dyN;
+                const distN = Math.sqrt(distN2);
+
+                // Vector from S pole to filing
+                const dxS = this.x - sX;
+                const dyS = this.y - sY;
+                const distS2 = dxS * dxS + dyS * dyS;
+                const distS = Math.sqrt(distS2);
+
+                // Field Strength ~ 1/r^2
+                // Field direction: Away from N, Towards S
+                // B = k * ( r_hat_N / distN^2 - r_hat_S / distS^2 )
+                //   = k * ( vec_N / distN^3 - vec_S / distS^3 )
+
+                // Avoid division by zero or extreme forces very close to poles
+                const minDist = 20;
+                const dN = Math.max(distN, minDist);
+                const dS = Math.max(distS, minDist);
+
+                const forceNx = dxN / (dN * dN * dN);
+                const forceNy = dyN / (dN * dN * dN);
+
+                const forceSx = dxS / (dS * dS * dS);
+                const forceSy = dyS / (dS * dS * dS);
+
+                // Net field vector
+                // Note: Field lines go OUT from N, IN to S.
+                // So vector is + (Away from N) + (Towards S)
+                // Towards S is (sX - x, sY - y).
+                // My dxS is (x - sX), so (sX - x) is -dxS.
+                // So we want to add vector pointing to S.
+                // Actually, standard convention: Test charge is North.
+                // Repelled by N (force along dxN), Attracted to S (force along -dxS).
+
+                const bx = forceNx - forceSx;
+                const by = forceNy - forceSy;
+
+                this.targetAngle = Math.atan2(by, bx);
+
+                // Smooth rotation
+                // Handle angle wrapping (-PI to PI)
+                let diff = this.targetAngle - this.angle;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+
+                this.angle += diff * 0.1;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                // Draw filing as a small rough line/shard
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+
+                ctx.beginPath();
+                ctx.moveTo(-FILING_SIZE/2, 0);
+                ctx.lineTo(FILING_SIZE/2, 0);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        function init() {
+            resize();
+            for (let i = 0; i < FILING_COUNT; i++) {
+                filings.push(new Filing());
+            }
+
+            // Start slide-in animation
+            // We use a simple lerp in the loop, but let's set initial state
+            magnet.y = height / 2;
+            magnet.targetX = width / 2;
+            magnet.targetY = height / 2;
+        }
+
+        function drawMagnet() {
+            const x = magnet.x;
+            const y = magnet.y;
+
+            ctx.save();
+            ctx.translate(x, y);
+            // Magnet body
+            ctx.fillStyle = '#ff6600'; // Orange
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.lineWidth = 4;
+
+            // Draw main rectangle
+            ctx.beginPath();
+            ctx.rect(-MAGNET_WIDTH/2, -MAGNET_HEIGHT/2, MAGNET_WIDTH, MAGNET_HEIGHT);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw dividing line
+            ctx.beginPath();
+            ctx.moveTo(0, -MAGNET_HEIGHT/2);
+            ctx.lineTo(0, MAGNET_HEIGHT/2);
+            ctx.stroke();
+
+            // Draw Poles Text
+            ctx.fillStyle = '#1a1a1a';
+            ctx.font = 'bold 24px Courier New';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // If polarity is 1: [ S | N ] (N is right)
+            // If polarity is -1: [ N | S ] (N is left)
+            // Wait, earlier logic: N is at +x relative to center if polarity 1.
+            // So Right side is N.
+
+            const leftLabel = magnet.polarity === 1 ? 'S' : 'N';
+            const rightLabel = magnet.polarity === 1 ? 'N' : 'S';
+
+            ctx.fillText(leftLabel, -MAGNET_WIDTH/4, 0);
+            ctx.fillText(rightLabel, MAGNET_WIDTH/4, 0);
+
+            ctx.restore();
+        }
+
+        function loop() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Update Magnet Position
+            if (!magnet.isDragging) {
+                // Slide in or return to target
+                magnet.x += (magnet.targetX - magnet.x) * 0.05;
+                magnet.y += (magnet.targetY - magnet.y) * 0.05;
+
+                if (Math.abs(magnet.x - magnet.targetX) < 1 && !magnet.slideInComplete) {
+                    magnet.slideInComplete = true;
+                }
+            }
+
+            // Update and Draw Filings
+            filings.forEach(filing => {
+                filing.update(magnet.x, magnet.y, magnet.polarity);
+                filing.draw(ctx);
+            });
+
+            // Draw Magnet
+            drawMagnet();
+
+            requestAnimationFrame(loop);
+        }
+
+        // Interaction
+        function getPointerPos(e) {
+            if (e.touches) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+            return { x: e.clientX, y: e.clientY };
+        }
+
+        function onDown(e) {
+            const pos = getPointerPos(e);
+            const mx = magnet.x;
+            const my = magnet.y;
+
+            // Check if clicking magnet
+            if (pos.x > mx - MAGNET_WIDTH/2 && pos.x < mx + MAGNET_WIDTH/2 &&
+                pos.y > my - MAGNET_HEIGHT/2 && pos.y < my + MAGNET_HEIGHT/2) {
+                magnet.isDragging = true;
+                magnet.dragOffsetX = mx - pos.x;
+                magnet.dragOffsetY = my - pos.y;
+                canvas.style.cursor = 'grabbing';
+            }
+        }
+
+        function onMove(e) {
+            if (magnet.isDragging) {
+                const pos = getPointerPos(e);
+                magnet.x = pos.x + magnet.dragOffsetX;
+                magnet.y = pos.y + magnet.dragOffsetY;
+                // Update target so it doesn't drift back when released immediately
+                magnet.targetX = magnet.x;
+                magnet.targetY = magnet.y;
+            } else {
+                // Hover effect cursor
+                const pos = getPointerPos(e);
+                const mx = magnet.x;
+                const my = magnet.y;
+                if (pos.x > mx - MAGNET_WIDTH/2 && pos.x < mx + MAGNET_WIDTH/2 &&
+                    pos.y > my - MAGNET_HEIGHT/2 && pos.y < my + MAGNET_HEIGHT/2) {
+                    canvas.style.cursor = 'grab';
+                } else {
+                    canvas.style.cursor = 'default';
+                }
+            }
+        }
+
+        function onUp() {
+            magnet.isDragging = false;
+            canvas.style.cursor = 'default';
+        }
+
+        // Event Listeners
+        window.addEventListener('resize', resize);
+
+        canvas.addEventListener('mousedown', onDown);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); onDown(e); }, {passive: false});
+        window.addEventListener('touchmove', (e) => { e.preventDefault(); onMove(e); }, {passive: false});
+        window.addEventListener('touchend', onUp);
+
+        polarityBtn.addEventListener('click', () => {
+            magnet.polarity *= -1;
+        });
+
+        // Init
+        init();
+        loop();
+
+    </script>
+</body>
+</html>
