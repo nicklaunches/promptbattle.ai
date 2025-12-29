@@ -1,0 +1,1 @@
+Make a night-sky scene where a bright meteor streaks across in the first 1s, hits the ground, and triggers a circular shockwave ripple + dust particles. After impact, small embers drift upward. Add a slider for meteor speed and a click to spawn another meteor at a random angle. Single HTML/CSS/JS file; use canvas 2D.

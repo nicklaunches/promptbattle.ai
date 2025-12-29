@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meteor Impact</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #020111 0%, #191621 100%);
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 8px;
+            pointer-events: auto;
+            user-select: none;
+        }
+        label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        input[type="range"] {
+            cursor: pointer;
+        }
+        .hint {
+            margin-top: 5px;
+            font-size: 0.8em;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <label>
+            Meteor Speed:
+            <input type="range" id="speedSlider" min="0.5" max="5" step="0.1" value="2">
+            <span id="speedValue">2.0x</span>
+        </label>
+        <div class="hint">Click anywhere to spawn a meteor</div>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+
+        let width, height;
+        let speedMultiplier = parseFloat(speedSlider.value);
+
+        // Entities
+        const meteors = [];
+        const particles = [];
+        const stars = [];
+
+        // Ground level (slightly above bottom)
+        let groundY;
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            groundY = height - 20;
+            initStars();
+        }
+
+        window.addEventListener('resize', resize);
+
+        speedSlider.addEventListener('input', (e) => {
+            speedMultiplier = parseFloat(e.target.value);
+            speedValue.textContent = speedMultiplier.toFixed(1) + 'x';
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            spawnMeteor(e.clientX, e.clientY); // Optional: aim towards click?
+            // Requirement says "click to spawn another meteor at a random angle".
+            // Let's just spawn one that lands somewhere random or near the click?
+            // "at a random angle" implies the trajectory is random.
+            // Let's spawn from top and land at a random spot on the ground.
+            spawnMeteor();
+        });
+
+        class Star {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * (groundY - 100); // Keep stars in the sky
+                this.size = Math.random() * 1.5;
+                this.alpha = Math.random();
+                this.twinkleSpeed = 0.01 + Math.random() * 0.03;
+            }
+            update() {
+                this.alpha += this.twinkleSpeed;
+                if (this.alpha > 1 || this.alpha < 0.2) {
+                    this.twinkleSpeed *= -1;
+                }
+            }
+            draw() {
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function initStars() {
+            stars.length = 0;
+            for (let i = 0; i < 200; i++) {
+                stars.push(new Star());
+            }
+        }
+
+        class Meteor {
+            constructor() {
+                // Start high up, maybe off screen
+                this.startX = Math.random() * width;
+                this.startY = -100;
+
+                // Target a random spot on the ground
+                this.targetX = Math.random() * width;
+                this.targetY = groundY;
+
+                // Calculate angle and velocity
+                const dx = this.targetX - this.startX;
+                const dy = this.targetY - this.startY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                // Base speed to cross in ~1s (at 1x multiplier)
+                // Distance is roughly height. 60fps.
+                // Speed = distance / 60.
+                this.baseSpeed = distance / 60;
+
+                this.x = this.startX;
+                this.y = this.startY;
+
+                this.angle = Math.atan2(dy, dx);
+                this.vx = Math.cos(this.angle) * this.baseSpeed;
+                this.vy = Math.sin(this.angle) * this.baseSpeed;
+
+                this.radius = 3 + Math.random() * 2;
+                this.trail = [];
+                this.dead = false;
+            }
+
+            update() {
+                // Apply speed multiplier
+                const currentVx = this.vx * speedMultiplier;
+                const currentVy = this.vy * speedMultiplier;
+
+                this.x += currentVx;
+                this.y += currentVy;
+
+                // Add trail position
+                this.trail.push({x: this.x, y: this.y, alpha: 1});
+                if (this.trail.length > 20) this.trail.shift();
+
+                // Fade trail
+                this.trail.forEach(t => t.alpha -= 0.05);
+
+                // Check collision with ground
+                if (this.y >= groundY) {
+                    this.dead = true;
+                    createImpact(this.x, groundY);
+                }
+            }
+
+            draw() {
+                // Draw trail
+                ctx.beginPath();
+                for (let i = 0; i < this.trail.length - 1; i++) {
+                    const t = this.trail[i];
+                    const next = this.trail[i+1];
+                    ctx.strokeStyle = `rgba(255, 200, 100, ${t.alpha})`;
+                    ctx.lineWidth = this.radius * (i / this.trail.length) * 2;
+                    ctx.moveTo(t.x, t.y);
+                    ctx.lineTo(next.x, next.y);
+                    ctx.stroke();
+                }
+
+                // Draw head
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#fa0';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        class Particle {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type; // 'shockwave', 'dust', 'ember'
+                this.dead = false;
+
+                if (type === 'shockwave') {
+                    this.radius = 1;
+                    this.maxRadius = 100 + Math.random() * 50;
+                    this.alpha = 1;
+                    this.lineWidth = 5;
+                } else if (type === 'dust') {
+                    this.vx = (Math.random() - 0.5) * 10;
+                    this.vy = (Math.random() - 1) * 5; // Slightly up
+                    this.size = Math.random() * 4 + 1;
+                    this.alpha = 0.8;
+                    this.decay = 0.01 + Math.random() * 0.02;
+                    this.gravity = 0.1;
+                } else if (type === 'ember') {
+                    this.vx = (Math.random() - 0.5) * 2;
+                    this.vy = -Math.random() * 3 - 1; // Upward
+                    this.size = Math.random() * 2 + 1;
+                    this.alpha = 1;
+                    this.decay = 0.005 + Math.random() * 0.01;
+                    this.color = `hsl(${10 + Math.random() * 40}, 100%, 50%)`; // Orange/Yellow
+                }
+            }
+
+            update() {
+                if (this.type === 'shockwave') {
+                    this.radius += 5 * speedMultiplier; // Shockwave expands faster with speed? Or constant? Let's make it snappy.
+                    this.alpha -= 0.02;
+                    if (this.alpha <= 0) this.dead = true;
+                } else if (this.type === 'dust') {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.vy += this.gravity; // Fall back down
+                    this.alpha -= this.decay;
+
+                    // Bounce on ground? Or just sink?
+                    if (this.y > groundY) {
+                        this.y = groundY;
+                        this.vx *= 0.8; // Friction
+                    }
+
+                    if (this.alpha <= 0) this.dead = true;
+                } else if (this.type === 'ember') {
+                    this.x += this.vx + Math.sin(Date.now() / 100) * 0.5; // Wiggle
+                    this.y += this.vy;
+                    this.alpha -= this.decay;
+                    if (this.alpha <= 0) this.dead = true;
+                }
+            }
+
+            draw() {
+                if (this.type === 'shockwave') {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.scale(1, 0.3); // Flatten circle to look like perspective on ground
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                    ctx.lineWidth = this.lineWidth;
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (this.type === 'dust') {
+                    ctx.fillStyle = `rgba(150, 140, 130, ${this.alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.type === 'ember') {
+                    ctx.fillStyle = this.color;
+                    ctx.globalAlpha = this.alpha;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+        }
+
+        function createImpact(x, y) {
+            // Shockwave
+            particles.push(new Particle(x, y, 'shockwave'));
+
+            // Dust
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, 'dust'));
+            }
+
+            // Embers
+            for (let i = 0; i < 30; i++) {
+                particles.push(new Particle(x, y, 'ember'));
+            }
+
+            // Flash
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.fillRect(0, 0, width, height);
+        }
+
+        function spawnMeteor(targetX, targetY) {
+            meteors.push(new Meteor());
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw stars
+            stars.forEach(star => {
+                star.update();
+                star.draw();
+            });
+
+            // Draw ground (silhouette)
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, groundY, width, height - groundY);
+
+            // Update and draw meteors
+            for (let i = meteors.length - 1; i >= 0; i--) {
+                const m = meteors[i];
+                m.update();
+                m.draw();
+                if (m.dead) {
+                    meteors.splice(i, 1);
+                }
+            }
+
+            // Update and draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                p.draw();
+                if (p.dead) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // Init
+        resize();
+        spawnMeteor(); // Start with one
+        animate();
+
+    </script>
+</body>
+</html>
