@@ -1,0 +1,1 @@
+Create a tiny solar system on canvas: immediately show a comet entering fast with a glowing trail, slingshotting around the sun, then settling into an orbit. Planets orbit at different speeds; add subtle star twinkle. Click to spawn another comet with a different trajectory; add a 'Clear trails' button. Single HTML/CSS/JS file, no external libs.

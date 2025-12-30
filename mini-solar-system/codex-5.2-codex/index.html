@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Tiny Solar System</title>
+        <style>
+            :root {
+                --bg1: #0b0e1a;
+                --bg2: #0d1325;
+                --sun: #ffcf6b;
+                --orbit: #2a355a;
+                --ui: #e6edf7;
+                --accent: #7dd3fc;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+            }
+            body {
+                font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+                background: radial-gradient(
+                    1200px 800px at 70% 20%,
+                    #121a34 0%,
+                    var(--bg1) 55%,
+                    #070910 100%
+                );
+                color: var(--ui);
+                overflow: hidden;
+            }
+            #wrap {
+                position: relative;
+                width: 100%;
+                height: 100%;
+            }
+            canvas {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+            .ui {
+                position: absolute;
+                left: 16px;
+                top: 16px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                background: rgba(8, 10, 18, 0.55);
+                padding: 10px 12px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                backdrop-filter: blur(6px);
+            }
+            button {
+                background: linear-gradient(135deg, #0ea5e9, #22d3ee);
+                color: #08111b;
+                border: 0;
+                padding: 8px 12px;
+                border-radius: 10px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+            button:active {
+                transform: translateY(1px);
+            }
+            .hint {
+                font-size: 12px;
+                opacity: 0.8;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="wrap">
+            <canvas id="c"></canvas>
+            <div class="ui">
+                <button id="clear">Clear trails</button>
+                <div class="hint">Click anywhere to spawn a comet</div>
+            </div>
+        </div>
+
+        <script>
+            (() => {
+                const canvas = document.getElementById("c");
+                const ctx = canvas.getContext("2d");
+
+                let w, h, cx, cy, scale;
+                const TWO_PI = Math.PI * 2;
+
+                function resize() {
+                    w = canvas.width = Math.floor(
+                        window.innerWidth * devicePixelRatio
+                    );
+                    h = canvas.height = Math.floor(
+                        window.innerHeight * devicePixelRatio
+                    );
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.scale(devicePixelRatio, devicePixelRatio);
+                    w = Math.floor(w / devicePixelRatio);
+                    h = Math.floor(h / devicePixelRatio);
+                    cx = w * 0.5;
+                    cy = h * 0.5;
+                    scale = Math.min(w, h);
+                }
+                window.addEventListener("resize", resize);
+                resize();
+
+                // Stars
+                const stars = [];
+                const starCount = 120;
+                for (let i = 0; i < starCount; i++) {
+                    stars.push({
+                        x: Math.random(),
+                        y: Math.random(),
+                        r: 0.6 + Math.random() * 1.4,
+                        tw: Math.random() * TWO_PI,
+                        sp: 0.004 + Math.random() * 0.006,
+                    });
+                }
+
+                // Planets
+                const planets = [
+                    { r: 30, size: 3, speed: 0.015, color: "#9dd6ff" },
+                    { r: 50, size: 4, speed: 0.011, color: "#ffd59a" },
+                    { r: 80, size: 5, speed: 0.008, color: "#a7f3d0" },
+                    { r: 115, size: 6, speed: 0.006, color: "#fca5a5" },
+                    { r: 155, size: 7, speed: 0.0045, color: "#c4b5fd" },
+                ].map((p) => ({ ...p, a: Math.random() * TWO_PI }));
+
+                // Comets
+                const comets = [];
+                const trails = [];
+                const maxTrail = 2400;
+
+                function spawnComet(px, py) {
+                    // spawn from screen edge toward sun with high speed, then allow gravity to capture
+                    const edge = Math.floor(Math.random() * 4);
+                    let x, y;
+                    if (edge === 0) {
+                        x = -40;
+                        y = Math.random() * h;
+                    }
+                    if (edge === 1) {
+                        x = w + 40;
+                        y = Math.random() * h;
+                    }
+                    if (edge === 2) {
+                        x = Math.random() * w;
+                        y = -40;
+                    }
+                    if (edge === 3) {
+                        x = Math.random() * w;
+                        y = h + 40;
+                    }
+
+                    const target = {
+                        x: cx + (Math.random() * 80 - 40),
+                        y: cy + (Math.random() * 80 - 40),
+                    };
+                    const dx = target.x - x;
+                    const dy = target.y - y;
+                    const d = Math.hypot(dx, dy) || 1;
+
+                    const speed = 6 + Math.random() * 2.5;
+                    let vx = (dx / d) * speed;
+                    let vy = (dy / d) * speed;
+
+                    // slight random deflection
+                    vx += (Math.random() - 0.5) * 1.5;
+                    vy += (Math.random() - 0.5) * 1.5;
+
+                    const hue = 180 + Math.random() * 90;
+
+                    comets.push({
+                        x,
+                        y,
+                        vx,
+                        vy,
+                        mass: 1,
+                        life: 0,
+                        hue,
+                        tail: [],
+                    });
+                }
+
+                // initial comet
+                spawnComet();
+
+                document.addEventListener("click", (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    spawnComet(e.clientX - rect.left, e.clientY - rect.top);
+                });
+
+                document
+                    .getElementById("clear")
+                    .addEventListener("click", () => {
+                        trails.length = 0;
+                        comets.forEach((c) => (c.tail.length = 0));
+                    });
+
+                function drawStars() {
+                    ctx.save();
+                    ctx.fillStyle = "#0b0e1a";
+                    ctx.fillRect(0, 0, w, h);
+
+                    for (const s of stars) {
+                        s.tw += s.sp;
+                        const tw = 0.6 + Math.sin(s.tw) * 0.4;
+                        ctx.globalAlpha = tw;
+                        ctx.fillStyle = "#cbd5ff";
+                        ctx.beginPath();
+                        ctx.arc(s.x * w, s.y * h, s.r, 0, TWO_PI);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawSun() {
+                    ctx.save();
+                    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 70);
+                    g.addColorStop(0, "#fff2c4");
+                    g.addColorStop(0.3, "#ffd57a");
+                    g.addColorStop(1, "rgba(255,180,70,0)");
+                    ctx.fillStyle = g;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 70, 0, TWO_PI);
+                    ctx.fill();
+
+                    ctx.fillStyle = "rgba(255,200,90,0.9)";
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 16, 0, TWO_PI);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                function drawOrbits() {
+                    ctx.save();
+                    ctx.strokeStyle = "rgba(120,140,190,0.15)";
+                    for (const p of planets) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, p.r, 0, TWO_PI);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                function drawPlanets() {
+                    for (const p of planets) {
+                        p.a += p.speed;
+                        const x = cx + Math.cos(p.a) * p.r;
+                        const y = cy + Math.sin(p.a) * p.r;
+                        ctx.save();
+                        ctx.fillStyle = p.color;
+                        ctx.shadowColor = p.color;
+                        ctx.shadowBlur = 8;
+                        ctx.beginPath();
+                        ctx.arc(x, y, p.size, 0, TWO_PI);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                }
+
+                // Physics for comets
+                function stepComets() {
+                    const G = 0.9; // gravity strength
+                    const capture = 0.995; // dampen to let settle into orbit
+                    for (const c of comets) {
+                        const dx = cx - c.x;
+                        const dy = cy - c.y;
+                        const dist = Math.hypot(dx, dy) + 0.001;
+                        const ax = (dx / dist) * (G / (dist * 0.02));
+                        const ay = (dy / dist) * (G / (dist * 0.02));
+
+                        c.vx += ax;
+                        c.vy += ay;
+
+                        // slight damping after initial slingshot
+                        if (c.life > 120) {
+                            c.vx *= capture;
+                            c.vy *= capture;
+                        }
+
+                        c.x += c.vx;
+                        c.y += c.vy;
+                        c.life++;
+
+                        // store trail
+                        c.tail.push({ x: c.x, y: c.y, a: 1 });
+                        if (c.tail.length > 140) c.tail.shift();
+                    }
+                }
+
+                function drawComets() {
+                    for (const c of comets) {
+                        // trail
+                        ctx.save();
+                        for (let i = 0; i < c.tail.length; i++) {
+                            const t = c.tail[i];
+                            const alpha = i / c.tail.length;
+                            ctx.strokeStyle = `hsla(${c.hue}, 90%, 70%, ${
+                                alpha * 0.7
+                            })`;
+                            ctx.lineWidth = 2.5 * alpha;
+                            if (i > 0) {
+                                const p = c.tail[i - 1];
+                                ctx.beginPath();
+                                ctx.moveTo(p.x, p.y);
+                                ctx.lineTo(t.x, t.y);
+                                ctx.stroke();
+                            }
+                        }
+                        ctx.restore();
+
+                        // head glow
+                        ctx.save();
+                        ctx.fillStyle = `hsla(${c.hue}, 90%, 75%, 1)`;
+                        ctx.shadowColor = `hsla(${c.hue}, 90%, 80%, 0.9)`;
+                        ctx.shadowBlur = 18;
+                        ctx.beginPath();
+                        ctx.arc(c.x, c.y, 3, 0, TWO_PI);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                }
+
+                // persistent trails layer
+                function drawTrailsLayer() {
+                    // trails is unused in current setup but reserved for future accumulation
+                }
+
+                function tick() {
+                    drawStars();
+                    drawOrbits();
+                    drawSun();
+                    drawPlanets();
+                    stepComets();
+                    drawComets();
+                    requestAnimationFrame(tick);
+                }
+                tick();
+            })();
+        </script>
+    </body>
+</html>

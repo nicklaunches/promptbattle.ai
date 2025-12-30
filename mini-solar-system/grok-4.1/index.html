@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Tiny Solar System with Comets</title>
+        <style>
+            body {
+                margin: 0;
+                background: #000;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+            }
+            canvas {
+                flex: 1;
+                cursor: crosshair;
+            }
+            button {
+                padding: 10px 20px;
+                font-size: 16px;
+                background: #222;
+                color: #fff;
+                border: none;
+                cursor: pointer;
+            }
+            button:hover {
+                background: #444;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="c"></canvas>
+        <button id="clear">Clear trails</button>
+
+        <script>
+            const canvas = document.getElementById("c");
+            const ctx = canvas.getContext("2d");
+            const clearBtn = document.getElementById("clear");
+
+            let w, h, cx, cy;
+
+            function resize() {
+                w = canvas.width = window.innerWidth;
+                h = canvas.height = window.innerHeight;
+                cx = w / 2;
+                cy = h / 2;
+            }
+            resize();
+            window.addEventListener("resize", resize);
+
+            const sun = { r: 25, glow: 60 };
+            const planets = [
+                { r: 80, speed: 0.015, size: 8, color: "#a0a0ff" }, // Mercury-like
+                { r: 130, speed: 0.01, size: 12, color: "#ffcc88" }, // Venus-like
+                { r: 190, speed: 0.007, size: 12, color: "#88aaff" }, // Earth-like
+                { r: 260, speed: 0.005, size: 10, color: "#ff8888" }, // Mars-like
+                { r: 380, speed: 0.002, size: 20, color: "#ffff88" }, // Jupiter-like
+            ];
+
+            const stars = [];
+            for (let i = 0; i < 200; i++) {
+                stars.push({
+                    x: Math.random() * w,
+                    y: Math.random() * h,
+                    size: Math.random() * 1.5,
+                    brightness: Math.random(),
+                });
+            }
+
+            class Comet {
+                constructor(x, y, vx, vy, color = "#ffffff") {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.trail = [];
+                    this.trailLength = 80;
+                }
+
+                update() {
+                    // Gravity from sun (G * M simplified to 3000)
+                    const dx = cx - this.x;
+                    const dy = cy - this.y;
+                    const distSq = dx * dx + dy * dy + 1000; // soften
+                    const force = 3000 / distSq;
+                    const ax = (force * dx) / Math.sqrt(distSq);
+                    const ay = (force * dy) / Math.sqrt(distSq);
+
+                    this.vx += ax;
+                    this.vy += ay;
+
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    // Add to trail
+                    this.trail.push({ x: this.x, y: this.y });
+                    if (this.trail.length > this.trailLength)
+                        this.trail.shift();
+                }
+
+                draw() {
+                    // Trail
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    this.trail.forEach((p, i) => {
+                        const opacity = i / this.trail.length;
+                        ctx.globalAlpha = opacity * 0.6;
+                        if (i === 0) ctx.moveTo(p.x, p.y);
+                        else ctx.lineTo(p.x, p.y);
+                    });
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+
+                    // Head glow
+                    const grad = ctx.createRadialGradient(
+                        this.x,
+                        this.y,
+                        0,
+                        this.x,
+                        this.y,
+                        12
+                    );
+                    grad.addColorStop(0, "#ffffff");
+                    grad.addColorStop(0.4, this.color);
+                    grad.addColorStop(1, "transparent");
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(this.x - 12, this.y - 12, 24, 24);
+
+                    // Core
+                    ctx.fillStyle = "#ffffff";
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            const comets = [];
+
+            // Initial comet: fast entry from top-left, slingshot around sun
+            comets.push(new Comet(cx - 400, cy - 300, 6, 5, "#66ccff"));
+
+            let time = 0;
+
+            function animate() {
+                ctx.fillStyle = "rgba(0,0,0,0.15)";
+                ctx.fillRect(0, 0, w, h);
+
+                // Stars with subtle twinkle
+                stars.forEach((s) => {
+                    const twinkle =
+                        0.5 + 0.5 * Math.sin(time * 0.05 + s.brightness * 10);
+                    ctx.fillStyle = `rgba(255,255,255,${twinkle * 0.8})`;
+                    ctx.fillRect(s.x, s.y, s.size, s.size);
+                });
+
+                // Sun glow
+                const sunGrad = ctx.createRadialGradient(
+                    cx,
+                    cy,
+                    0,
+                    cx,
+                    cy,
+                    sun.glow
+                );
+                sunGrad.addColorStop(0, "#ffff88");
+                sunGrad.addColorStop(0.3, "#ffaa00");
+                sunGrad.addColorStop(1, "transparent");
+                ctx.fillStyle = sunGrad;
+                ctx.fillRect(
+                    cx - sun.glow,
+                    cy - sun.glow,
+                    sun.glow * 2,
+                    sun.glow * 2
+                );
+
+                // Sun
+                ctx.fillStyle = "#ffff00";
+                ctx.beginPath();
+                ctx.arc(cx, cy, sun.r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Planets
+                planets.forEach((p) => {
+                    const angle = time * p.speed;
+                    const x = cx + p.r * Math.cos(angle);
+                    const y = cy + p.r * Math.sin(angle);
+
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(x, y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Subtle orbit line
+                    ctx.strokeStyle = "rgba(100,100,100,0.1)";
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, p.r, 0, Math.PI * 2);
+                    ctx.stroke();
+                });
+
+                // Comets
+                comets.forEach((c) => {
+                    c.update();
+                    c.draw();
+                });
+
+                time += 0.8;
+                requestAnimationFrame(animate);
+            }
+            animate();
+
+            // Click to spawn new comet
+            canvas.addEventListener("click", (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+
+                // Random incoming direction and speed
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 4 + Math.random() * 6;
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+
+                const hue = Math.random() * 360;
+                const color = `hsl(${hue},80%,70%)`;
+
+                // Spawn comet outside the view in the direction it's coming from
+                const spawnDist = 600;
+                comets.push(
+                    new Comet(
+                        mx - (vx * spawnDist) / speed,
+                        my - (vy * spawnDist) / speed,
+                        vx,
+                        vy,
+                        color
+                    )
+                );
+            });
+
+            // Clear trails
+            clearBtn.addEventListener("click", () => {
+                comets.forEach((c) => (c.trail = []));
+            });
+        </script>
+    </body>
+</html>

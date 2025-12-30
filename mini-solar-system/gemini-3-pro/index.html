@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tiny Solar System</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+        button {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <button id="clearBtn">Clear Trails</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let width, height, cx, cy;
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            cx = width / 2;
+            cy = height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Physics Constants
+        const G = 5000; // Gravitational parameter (G * Mass of Sun)
+        
+        // State
+        const stars = [];
+        const planets = [];
+        let comets = [];
+
+        // Classes
+        class Star {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.size = Math.random() * 1.5;
+                this.baseAlpha = 0.3 + Math.random() * 0.5;
+                this.phase = Math.random() * Math.PI * 2;
+                this.speed = 0.02 + Math.random() * 0.03;
+            }
+            draw() {
+                this.phase += this.speed;
+                const alpha = this.baseAlpha + Math.sin(this.phase) * 0.2;
+                ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+            }
+        }
+
+        class Planet {
+            constructor(distance, speed, size, color) {
+                this.distance = distance;
+                this.angle = Math.random() * Math.PI * 2;
+                this.speed = speed;
+                this.size = size;
+                this.color = color;
+            }
+            update() {
+                this.angle += this.speed;
+            }
+            draw() {
+                const x = cx + Math.cos(this.angle) * this.distance;
+                const y = cy + Math.sin(this.angle) * this.distance;
+                
+                // Orbit line (faint)
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+                ctx.lineWidth = 1;
+                ctx.arc(cx, cy, this.distance, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Planet
+                ctx.beginPath();
+                ctx.fillStyle = this.color;
+                ctx.arc(x, y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Shine
+                ctx.beginPath();
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.arc(x - this.size*0.3, y - this.size*0.3, this.size*0.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        class Comet {
+            constructor(x, y, vx, vy) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.trail = [];
+                this.maxTrail = 150;
+                this.color = `hsl(${180 + Math.random()*40}, 100%, 70%)`;
+            }
+
+            update() {
+                const dx = cx - this.x;
+                const dy = cy - this.y;
+                const distSq = dx*dx + dy*dy;
+                const dist = Math.sqrt(distSq);
+                
+                // Gravity
+                // F = G*M*m / r^2
+                // a = F/m = GM / r^2
+                const force = G / distSq;
+                const ax = force * (dx / dist);
+                const ay = force * (dy / dist);
+
+                this.vx += ax;
+                this.vy += ay;
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Trail logic
+                this.trail.push({x: this.x, y: this.y, v: Math.sqrt(this.vx*this.vx + this.vy*this.vy)});
+                if (this.trail.length > this.maxTrail) {
+                    this.trail.shift();
+                }
+            }
+
+            draw() {
+                if (this.trail.length < 2) return;
+
+                // Draw glowing trail
+                ctx.beginPath();
+                ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                for (let i = 1; i < this.trail.length; i++) {
+                    // Quadratic bezier for smoothness
+                    const p0 = this.trail[i-1];
+                    const p1 = this.trail[i];
+                    const midX = (p0.x + p1.x) / 2;
+                    const midY = (p0.y + p1.y) / 2;
+                    ctx.quadraticCurveTo(p0.x, p0.y, midX, midY);
+                }
+                ctx.lineTo(this.trail[this.trail.length-1].x, this.trail[this.trail.length-1].y);
+                
+                // Gradient trail based on speed/heat
+                const grad = ctx.createLinearGradient(
+                    this.trail[0].x, this.trail[0].y, 
+                    this.x, this.y
+                );
+                grad.addColorStop(0, 'rgba(0,0,0,0)');
+                grad.addColorStop(1, this.color);
+                
+                ctx.strokeStyle = grad;
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Head
+                ctx.beginPath();
+                ctx.fillStyle = '#fff';
+                ctx.arc(this.x, this.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Initialization
+        for (let i = 0; i < 150; i++) stars.push(new Star());
+        
+        // Mercury-ish
+        planets.push(new Planet(60, 0.02, 3, '#aaa'));
+        // Venus-ish
+        planets.push(new Planet(90, 0.015, 5, '#eec'));
+        // Earth-ish
+        planets.push(new Planet(130, 0.01, 5.5, '#48f'));
+        // Mars-ish
+        planets.push(new Planet(170, 0.008, 4, '#c54'));
+        // Jupiter-ish
+        planets.push(new Planet(260, 0.004, 12, '#dca'));
+
+        // Initial Comet - Slingshot setup
+        // Start from top-left, aiming below the sun to swing around
+        function spawnInitialComet() {
+            const startX = -100;
+            const startY = -100;
+            // Aim towards center but offset to create angular momentum
+            // Velocity needs to be carefully tuned for a capture orbit
+            // v^2 < 2GM/r for capture
+            const v = 2.5; 
+            const angle = Math.atan2(cy - startY + 150, cx - startX - 50); // Offset target
+            
+            comets.push(new Comet(
+                startX, 
+                startY, 
+                Math.cos(angle) * v, 
+                Math.sin(angle) * v
+            ));
+        }
+        spawnInitialComet();
+
+        // Interaction
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            comets.forEach(c => c.trail = []);
+        });
+
+        canvas.addEventListener('click', (e) => {
+            // Spawn random comet from edge
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            switch(side) {
+                case 0: x = Math.random() * width; y = -50; break; // Top
+                case 1: x = width + 50; y = Math.random() * height; break; // Right
+                case 2: x = Math.random() * width; y = height + 50; break; // Bottom
+                case 3: x = -50; y = Math.random() * height; break; // Left
+            }
+            
+            // Aim roughly at sun with randomness
+            const targetX = cx + (Math.random() - 0.5) * 200;
+            const targetY = cy + (Math.random() - 0.5) * 200;
+            const angle = Math.atan2(targetY - y, targetX - x);
+            const speed = 2 + Math.random() * 3;
+
+            comets.push(new Comet(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed));
+        });
+
+        // Loop
+        function animate() {
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.3)'; // Trail fade effect for background
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw Stars
+            stars.forEach(s => s.draw());
+
+            // Draw Sun
+            ctx.shadowBlur = 50;
+            ctx.shadowColor = '#fd0';
+            ctx.beginPath();
+            ctx.fillStyle = '#fd0';
+            ctx.arc(cx, cy, 25, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Draw Planets
+            planets.forEach(p => {
+                p.update();
+                p.draw();
+            });
+
+            // Draw Comets
+            comets.forEach(c => {
+                c.update();
+                c.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+    </script>
+</body>
+</html>
