@@ -1,0 +1,1 @@
+Build a playful crosswalk scene: instantly a car skids in and stops at a red light with tire smoke, pedestrians start crossing, then cars move when green. Clicking the traffic light toggles states (red/yellow/green) with correct behavior. Add a 'Honk' button that makes nearby elements wobble for 300ms. Single HTML/CSS/JS; simple top-down view.
