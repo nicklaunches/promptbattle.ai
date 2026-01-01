@@ -1,0 +1,1 @@
+Build a self-playing Pong (ping pong) game. Single HTML file with canvas + JS. On load, start instantly: ball serve + tiny screen shake + “PONG” stamp. Two paddles auto-track ball with small reaction delay + occasional error. requestAnimationFrame loop, collisions + score, reset on point. Style: warm paper background, punchy orange highlights, black ink outlines, subtle grain.

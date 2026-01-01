@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Self-Playing Pong</title>
+        <style>
+            :root {
+                --paper: #f3ead7;
+                --paper-dark: #e8dcc4;
+                --ink: #1a1712;
+                --orange: #f07c2b;
+                --orange-deep: #d85b1c;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+            }
+
+            body {
+                display: grid;
+                place-items: center;
+                background: radial-gradient(
+                        1200px 900px at 20% 10%,
+                        #fff6e5 0%,
+                        transparent 60%
+                    ),
+                    radial-gradient(
+                        900px 700px at 80% 90%,
+                        #fff1dc 0%,
+                        transparent 55%
+                    ),
+                    linear-gradient(
+                        180deg,
+                        var(--paper) 0%,
+                        var(--paper-dark) 100%
+                    );
+                font-family: "Courier New", Courier, monospace;
+                color: var(--ink);
+            }
+
+            .wrap {
+                position: relative;
+                width: min(92vw, 980px);
+                aspect-ratio: 16 / 9;
+                border: 5px solid var(--ink);
+                box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12),
+                    inset 0 0 0 3px rgba(0, 0, 0, 0.08);
+                background: rgba(255, 248, 233, 0.85);
+                overflow: hidden;
+            }
+
+            canvas {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+
+            .grain {
+                position: absolute;
+                inset: 0;
+                background-image: repeating-linear-gradient(
+                        0deg,
+                        rgba(0, 0, 0, 0.03),
+                        rgba(0, 0, 0, 0.03) 1px,
+                        transparent 1px,
+                        transparent 3px
+                    ),
+                    repeating-linear-gradient(
+                        90deg,
+                        rgba(255, 255, 255, 0.05),
+                        rgba(255, 255, 255, 0.05) 1px,
+                        transparent 1px,
+                        transparent 4px
+                    );
+                mix-blend-mode: multiply;
+                opacity: 0.35;
+                pointer-events: none;
+            }
+
+            .stamp {
+                position: absolute;
+                inset: 0;
+                display: grid;
+                place-items: center;
+                font-size: clamp(32px, 6vw, 72px);
+                font-weight: 700;
+                letter-spacing: 0.35em;
+                color: var(--orange);
+                opacity: 0;
+                transform: translateY(10px) scale(0.9) rotate(-3deg);
+                transition: opacity 0.35s ease, transform 0.35s ease;
+                text-shadow: -3px 3px 0 rgba(0, 0, 0, 0.2),
+                    2px -2px 0 rgba(255, 255, 255, 0.4);
+                pointer-events: none;
+            }
+
+            .stamp.show {
+                opacity: 0.95;
+                transform: translateY(0) scale(1) rotate(-3deg);
+            }
+
+            .score {
+                position: absolute;
+                top: 12px;
+                left: 0;
+                right: 0;
+                display: flex;
+                justify-content: space-between;
+                padding: 0 18px;
+                font-size: clamp(16px, 2.4vw, 22px);
+                font-weight: 700;
+                letter-spacing: 0.2em;
+                text-transform: uppercase;
+                pointer-events: none;
+            }
+
+            .score span {
+                background: rgba(240, 124, 43, 0.15);
+                padding: 4px 10px;
+                border: 2px solid var(--ink);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap" id="stage">
+            <canvas id="game" width="960" height="540"></canvas>
+            <div class="grain"></div>
+            <div class="stamp" id="stamp">PONG</div>
+            <div class="score">
+                <span id="leftScore">0</span>
+                <span id="rightScore">0</span>
+            </div>
+        </div>
+
+        <script>
+            const canvas = document.getElementById("game");
+            const ctx = canvas.getContext("2d");
+            const stamp = document.getElementById("stamp");
+            const stage = document.getElementById("stage");
+            const leftScoreEl = document.getElementById("leftScore");
+            const rightScoreEl = document.getElementById("rightScore");
+
+            const state = {
+                width: canvas.width,
+                height: canvas.height,
+                paddles: [
+                    {
+                        x: 40,
+                        y: canvas.height / 2 - 50,
+                        w: 14,
+                        h: 100,
+                        vy: 0,
+                        reaction: 0,
+                    },
+                    {
+                        x: canvas.width - 54,
+                        y: canvas.height / 2 - 50,
+                        w: 14,
+                        h: 100,
+                        vy: 0,
+                        reaction: 0,
+                    },
+                ],
+                ball: {
+                    x: canvas.width / 2,
+                    y: canvas.height / 2,
+                    r: 8,
+                    vx: 320,
+                    vy: 190,
+                    speed: 380,
+                },
+                score: [0, 0],
+                lastTime: 0,
+                shake: 0,
+                shakeTime: 0,
+                serveCooldown: 0,
+            };
+
+            const rand = (min, max) => Math.random() * (max - min) + min;
+
+            function resetBall(direction = 1) {
+                state.ball.x = state.width / 2;
+                state.ball.y = state.height / 2 + rand(-30, 30);
+                const angle = rand(-0.35, 0.35);
+                const speed = state.ball.speed;
+                state.ball.vx = Math.cos(angle) * speed * direction;
+                state.ball.vy = Math.sin(angle) * speed * rand(0.8, 1.2);
+                state.serveCooldown = 0.45;
+                triggerStamp();
+                triggerShake(10);
+            }
+
+            function triggerShake(strength) {
+                state.shake = strength;
+                state.shakeTime = 0.2;
+            }
+
+            function triggerStamp() {
+                stamp.classList.add("show");
+                clearTimeout(triggerStamp.timer);
+                triggerStamp.timer = setTimeout(
+                    () => stamp.classList.remove("show"),
+                    480
+                );
+            }
+
+            function clamp(val, min, max) {
+                return Math.min(max, Math.max(min, val));
+            }
+
+            function updateAI(paddle, targetY, dt, isLeft) {
+                if (paddle.reaction <= 0) {
+                    paddle.reaction = rand(0.05, 0.2);
+                }
+                paddle.reaction -= dt;
+
+                const errorChance = isLeft ? 0.08 : 0.1;
+                const jitter =
+                    Math.random() < errorChance ? rand(-35, 35) : rand(-10, 10);
+                const desired = targetY + jitter;
+                const center = paddle.y + paddle.h / 2;
+                const delta = desired - center;
+                const speed = 360;
+
+                if (Math.abs(delta) > 4) {
+                    paddle.vy = clamp(delta * 2.8, -speed, speed);
+                } else {
+                    paddle.vy *= 0.85;
+                }
+
+                paddle.y += paddle.vy * dt;
+                paddle.y = clamp(paddle.y, 20, state.height - paddle.h - 20);
+            }
+
+            function reflectBall(paddle) {
+                const impact =
+                    (state.ball.y - (paddle.y + paddle.h / 2)) / (paddle.h / 2);
+                const angle = impact * 0.9;
+                const speed = Math.min(state.ball.speed + 20, 520);
+                state.ball.speed = speed;
+                const direction = state.ball.vx < 0 ? 1 : -1;
+                state.ball.vx = Math.cos(angle) * speed * direction;
+                state.ball.vy = Math.sin(angle) * speed;
+            }
+
+            function updateBall(dt) {
+                if (state.serveCooldown > 0) {
+                    state.serveCooldown -= dt;
+                    return;
+                }
+
+                state.ball.x += state.ball.vx * dt;
+                state.ball.y += state.ball.vy * dt;
+
+                if (state.ball.y - state.ball.r < 18) {
+                    state.ball.y = 18 + state.ball.r;
+                    state.ball.vy *= -1;
+                    triggerShake(4);
+                }
+                if (state.ball.y + state.ball.r > state.height - 18) {
+                    state.ball.y = state.height - 18 - state.ball.r;
+                    state.ball.vy *= -1;
+                    triggerShake(4);
+                }
+
+                const left = state.paddles[0];
+                const right = state.paddles[1];
+
+                if (
+                    state.ball.x - state.ball.r < left.x + left.w &&
+                    state.ball.y > left.y &&
+                    state.ball.y < left.y + left.h &&
+                    state.ball.vx < 0
+                ) {
+                    state.ball.x = left.x + left.w + state.ball.r;
+                    reflectBall(left);
+                    triggerShake(6);
+                }
+
+                if (
+                    state.ball.x + state.ball.r > right.x &&
+                    state.ball.y > right.y &&
+                    state.ball.y < right.y + right.h &&
+                    state.ball.vx > 0
+                ) {
+                    state.ball.x = right.x - state.ball.r;
+                    reflectBall(right);
+                    triggerShake(6);
+                }
+
+                if (state.ball.x + state.ball.r < 0) {
+                    state.score[1] += 1;
+                    updateScore();
+                    resetBall(1);
+                }
+
+                if (state.ball.x - state.ball.r > state.width) {
+                    state.score[0] += 1;
+                    updateScore();
+                    resetBall(-1);
+                }
+            }
+
+            function updateScore() {
+                leftScoreEl.textContent = state.score[0];
+                rightScoreEl.textContent = state.score[1];
+            }
+
+            function drawTable() {
+                ctx.clearRect(0, 0, state.width, state.height);
+                ctx.save();
+
+                if (state.shakeTime > 0) {
+                    const intensity = state.shake * (state.shakeTime / 0.2);
+                    ctx.translate(
+                        rand(-intensity, intensity),
+                        rand(-intensity, intensity)
+                    );
+                }
+
+                ctx.fillStyle = "rgba(240, 124, 43, 0.08)";
+                ctx.fillRect(16, 16, state.width - 32, state.height - 32);
+
+                ctx.strokeStyle = "#1a1712";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(18, 18, state.width - 36, state.height - 36);
+
+                ctx.setLineDash([10, 14]);
+                ctx.beginPath();
+                ctx.moveTo(state.width / 2, 30);
+                ctx.lineTo(state.width / 2, state.height - 30);
+                ctx.strokeStyle = "rgba(26, 23, 18, 0.5)";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                ctx.fillStyle = "#f07c2b";
+                ctx.strokeStyle = "#1a1712";
+                ctx.lineWidth = 3;
+
+                state.paddles.forEach((paddle) => {
+                    ctx.beginPath();
+                    ctx.rect(paddle.x, paddle.y, paddle.w, paddle.h);
+                    ctx.fill();
+                    ctx.stroke();
+                });
+
+                ctx.beginPath();
+                ctx.arc(
+                    state.ball.x,
+                    state.ball.y,
+                    state.ball.r,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fillStyle = "#f07c2b";
+                ctx.fill();
+                ctx.strokeStyle = "#1a1712";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function loop(timestamp) {
+                const dt = Math.min(
+                    0.032,
+                    (timestamp - state.lastTime) / 1000 || 0.016
+                );
+                state.lastTime = timestamp;
+
+                state.shakeTime = Math.max(0, state.shakeTime - dt);
+
+                const targetY = state.ball.y;
+                updateAI(state.paddles[0], targetY, dt, true);
+                updateAI(state.paddles[1], targetY, dt, false);
+
+                updateBall(dt);
+                drawTable();
+
+                requestAnimationFrame(loop);
+            }
+
+            updateScore();
+            resetBall(Math.random() > 0.5 ? 1 : -1);
+            requestAnimationFrame(loop);
+        </script>
+    </body>
+</html>

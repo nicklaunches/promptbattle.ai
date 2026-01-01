@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self-Playing Pong</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #f4f1ea; /* Warm paper */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        /* Subtle grain effect */
+        body::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.05;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            z-index: 10;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border: 4px solid #1a1a1a; /* Black ink outline */
+        }
+
+        canvas {
+            display: block;
+            background-color: #f4f1ea;
+        }
+
+        #pong-stamp {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            font-size: 8rem;
+            font-weight: 900;
+            color: #ff5e00; /* Punchy orange */
+            border: 8px solid #ff5e00;
+            padding: 10px 40px;
+            text-transform: uppercase;
+            pointer-events: none;
+            opacity: 0;
+            transform-origin: center;
+            mix-blend-mode: multiply;
+            z-index: 20;
+            font-family: sans-serif;
+            letter-spacing: 10px;
+        }
+
+        .score {
+            position: absolute;
+            top: 20px;
+            font-size: 3rem;
+            font-weight: bold;
+            color: #1a1a1a;
+            opacity: 0.5;
+            z-index: 5;
+        }
+        #score-left { left: 25%; }
+        #score-right { right: 25%; }
+
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="score-left" class="score">0</div>
+        <div id="score-right" class="score">0</div>
+        <div id="pong-stamp">PONG</div>
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const stamp = document.getElementById('pong-stamp');
+        const scoreLeftEl = document.getElementById('score-left');
+        const scoreRightEl = document.getElementById('score-right');
+
+        // Game State
+        const state = {
+            ball: { x: 400, y: 250, vx: 0, vy: 0, size: 10, speed: 7 },
+            paddles: {
+                left: { x: 30, y: 250, w: 15, h: 80, vy: 0, score: 0, error: 0, reactionTimer: 0 },
+                right: { x: 755, y: 250, w: 15, h: 80, vy: 0, score: 0, error: 0, reactionTimer: 0 }
+            },
+            shake: 0
+        };
+
+        // Config
+        const PADDLE_SPEED = 6;
+        const AI_REACTION_DELAY = 10; // Frames to wait before updating target
+        const AI_ERROR_CHANCE = 0.02; // Chance to make a mistake per frame
+        const AI_ERROR_MAGNITUDE = 40; // Pixels to miss by
+        const COLORS = {
+            ink: '#1a1a1a',
+            highlight: '#ff5e00',
+            paper: '#f4f1ea'
+        };
+
+        function init() {
+            resetBall();
+            triggerStamp();
+            requestAnimationFrame(loop);
+        }
+
+        function resetBall() {
+            state.ball.x = canvas.width / 2;
+            state.ball.y = canvas.height / 2;
+            
+            // Randomize start direction
+            const dirX = Math.random() > 0.5 ? 1 : -1;
+            const dirY = (Math.random() * 2 - 1) * 0.5; // Slight vertical angle
+            
+            state.ball.vx = dirX * state.ball.speed;
+            state.ball.vy = dirY * state.ball.speed;
+
+            // Reset AI errors
+            state.paddles.left.error = 0;
+            state.paddles.right.error = 0;
+        }
+
+        function triggerStamp() {
+            stamp.style.transition = 'none';
+            stamp.style.transform = 'translate(-50%, -50%) scale(3) rotate(-10deg)';
+            stamp.style.opacity = '0';
+            
+            // Force reflow
+            void stamp.offsetWidth;
+
+            stamp.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.1s ease-in';
+            stamp.style.transform = 'translate(-50%, -50%) scale(1) rotate(-5deg)';
+            stamp.style.opacity = '0.8';
+            
+            triggerShake(15);
+
+            setTimeout(() => {
+                stamp.style.transition = 'opacity 1s ease-out';
+                stamp.style.opacity = '0';
+            }, 1000);
+        }
+
+        function triggerShake(amount) {
+            state.shake = amount;
+        }
+
+        function updateAI(paddle, ball) {
+            // Reaction delay
+            paddle.reactionTimer++;
+            if (paddle.reactionTimer < AI_REACTION_DELAY) return;
+            
+            // Occasional error injection
+            if (Math.random() < AI_ERROR_CHANCE) {
+                paddle.error = (Math.random() * 2 - 1) * AI_ERROR_MAGNITUDE;
+            }
+            // Decay error
+            paddle.error *= 0.95;
+
+            // Target calculation
+            let targetY = ball.y + paddle.error;
+
+            // Only track if ball is coming towards paddle (optional, but makes it more realistic)
+            // For simple self-play, tracking always is fine, but let's make it slightly lazy
+            
+            const diff = targetY - paddle.y;
+            
+            if (Math.abs(diff) > 10) {
+                if (diff > 0) paddle.y += PADDLE_SPEED;
+                else paddle.y -= PADDLE_SPEED;
+            }
+
+            // Clamp
+            paddle.y = Math.max(paddle.h/2, Math.min(canvas.height - paddle.h/2, paddle.y));
+        }
+
+        function update() {
+            // Ball Physics
+            state.ball.x += state.ball.vx;
+            state.ball.y += state.ball.vy;
+
+            // Wall Collisions (Top/Bottom)
+            if (state.ball.y - state.ball.size < 0 || state.ball.y + state.ball.size > canvas.height) {
+                state.ball.vy *= -1;
+                triggerShake(2);
+            }
+
+            // Paddle Collisions
+            const pLeft = state.paddles.left;
+            const pRight = state.paddles.right;
+
+            // Left Paddle
+            if (state.ball.x - state.ball.size < pLeft.x + pLeft.w &&
+                state.ball.x + state.ball.size > pLeft.x &&
+                state.ball.y > pLeft.y - pLeft.h/2 &&
+                state.ball.y < pLeft.y + pLeft.h/2) {
+                
+                state.ball.vx = Math.abs(state.ball.vx); // Force right
+                state.ball.vx *= 1.05; // Speed up slightly
+                
+                // Add "english" (spin influence)
+                const hitPoint = (state.ball.y - pLeft.y) / (pLeft.h/2);
+                state.ball.vy = hitPoint * 10;
+                
+                triggerShake(5);
+            }
+
+            // Right Paddle
+            if (state.ball.x + state.ball.size > pRight.x &&
+                state.ball.x - state.ball.size < pRight.x + pRight.w &&
+                state.ball.y > pRight.y - pRight.h/2 &&
+                state.ball.y < pRight.y + pRight.h/2) {
+                
+                state.ball.vx = -Math.abs(state.ball.vx); // Force left
+                state.ball.vx *= 1.05; // Speed up slightly
+
+                // Add "english"
+                const hitPoint = (state.ball.y - pRight.y) / (pRight.h/2);
+                state.ball.vy = hitPoint * 10;
+
+                triggerShake(5);
+            }
+
+            // Scoring
+            if (state.ball.x < 0) {
+                state.paddles.right.score++;
+                scoreRightEl.innerText = state.paddles.right.score;
+                resetBall();
+                triggerShake(10);
+            } else if (state.ball.x > canvas.width) {
+                state.paddles.left.score++;
+                scoreLeftEl.innerText = state.paddles.left.score;
+                resetBall();
+                triggerShake(10);
+            }
+
+            // AI Updates
+            updateAI(pLeft, state.ball);
+            updateAI(pRight, state.ball);
+
+            // Shake decay
+            if (state.shake > 0) state.shake *= 0.9;
+            if (state.shake < 0.5) state.shake = 0;
+        }
+
+        function draw() {
+            // Clear with shake offset
+            const shakeX = (Math.random() * 2 - 1) * state.shake;
+            const shakeY = (Math.random() * 2 - 1) * state.shake;
+
+            ctx.save();
+            ctx.translate(shakeX, shakeY);
+            
+            ctx.clearRect(-100, -100, canvas.width + 200, canvas.height + 200); // Clear wider for shake
+
+            // Draw Center Line (Dashed)
+            ctx.beginPath();
+            ctx.setLineDash([10, 15]);
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.strokeStyle = 'rgba(26, 26, 26, 0.2)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw Paddles
+            ctx.fillStyle = COLORS.ink;
+            
+            // Left
+            ctx.fillRect(
+                state.paddles.left.x, 
+                state.paddles.left.y - state.paddles.left.h/2, 
+                state.paddles.left.w, 
+                state.paddles.left.h
+            );
+
+            // Right
+            ctx.fillRect(
+                state.paddles.right.x, 
+                state.paddles.right.y - state.paddles.right.h/2, 
+                state.paddles.right.w, 
+                state.paddles.right.h
+            );
+
+            // Draw Ball
+            ctx.beginPath();
+            ctx.arc(state.ball.x, state.ball.y, state.ball.size, 0, Math.PI * 2);
+            ctx.fillStyle = COLORS.highlight;
+            ctx.fill();
+            ctx.strokeStyle = COLORS.ink;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Start
+        window.onload = init;
+
+    </script>
+</body>
+</html>
