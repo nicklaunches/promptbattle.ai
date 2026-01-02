@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crosswalk Chaos</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #2a2a2a;
+            font-family: 'Arial', sans-serif;
+        }
+
+        .scene {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            background: #3a3a3a;
+            overflow: hidden;
+            border: 4px solid #555;
+            border-radius: 8px;
+        }
+
+        .road-horizontal {
+            position: absolute;
+            width: 100%;
+            height: 180px;
+            top: 210px;
+            background: #444;
+        }
+
+        .road-vertical {
+            position: absolute;
+            width: 180px;
+            height: 100%;
+            left: 310px;
+            background: #444;
+        }
+
+        .lane-line {
+            position: absolute;
+            background: #ffd700;
+        }
+
+        .lane-h {
+            width: 60px;
+            height: 4px;
+            top: 50%;
+            transform: translateY(-2px);
+        }
+
+        .lane-v {
+            width: 4px;
+            height: 60px;
+            left: 50%;
+            transform: translateX(-2px);
+        }
+
+        .crosswalk {
+            position: absolute;
+            display: flex;
+            gap: 10px;
+        }
+
+        .crosswalk-h {
+            left: 310px;
+            width: 180px;
+            height: 30px;
+            flex-direction: row;
+        }
+
+        .crosswalk-h.top {
+            top: 210px;
+        }
+
+        .crosswalk-h.bottom {
+            top: 360px;
+        }
+
+        .crosswalk-v {
+            top: 210px;
+            width: 30px;
+            height: 180px;
+            flex-direction: column;
+        }
+
+        .crosswalk-v.left {
+            left: 310px;
+        }
+
+        .crosswalk-v.right {
+            left: 460px;
+        }
+
+        .stripe {
+            background: white;
+            flex: 1;
+        }
+
+        .car {
+            position: absolute;
+            width: 60px;
+            height: 40px;
+            background: #e74c3c;
+            border-radius: 6px;
+            transition: left 0.05s linear, top 0.05s linear;
+            z-index: 10;
+        }
+
+        .car::before {
+            content: '';
+            position: absolute;
+            width: 30px;
+            height: 25px;
+            background: #c0392b;
+            border-radius: 4px;
+        }
+
+        .car.horizontal::before {
+            top: 8px;
+            left: 35px;
+        }
+
+        .car.vertical {
+            transform: rotate(90deg);
+        }
+
+        .car.vertical::before {
+            left: 35px;
+        }
+
+        .tire-smoke {
+            position: absolute;
+            width: 30px;
+            height: 20px;
+            background: rgba(150, 150, 150, 0.6);
+            border-radius: 50%;
+            animation: smoke-fade 0.6s ease-out forwards;
+            z-index: 5;
+        }
+
+        @keyframes smoke-fade {
+            from {
+                opacity: 1;
+                transform: scale(0.5);
+            }
+            to {
+                opacity: 0;
+                transform: scale(2);
+            }
+        }
+
+        .pedestrian {
+            position: absolute;
+            width: 20px;
+            height: 30px;
+            background: #3498db;
+            border-radius: 4px;
+            transition: left 0.05s linear, top 0.05s linear;
+            z-index: 8;
+        }
+
+        .pedestrian::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: #2980b9;
+            border-radius: 50%;
+            top: -20px;
+            left: 1px;
+        }
+
+        .traffic-light {
+            position: absolute;
+            width: 50px;
+            height: 130px;
+            background: #222;
+            border-radius: 8px;
+            border: 3px solid #444;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-around;
+            padding: 10px 0;
+            cursor: pointer;
+            z-index: 20;
+            transition: transform 0.1s;
+        }
+
+        .traffic-light:hover {
+            transform: scale(1.05);
+        }
+
+        .traffic-light.top-left {
+            top: 150px;
+            left: 250px;
+        }
+
+        .light {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #333;
+            border: 2px solid #555;
+            transition: all 0.3s;
+        }
+
+        .light.active {
+            box-shadow: 0 0 20px currentColor, 0 0 40px currentColor;
+        }
+
+        .light.red.active {
+            background: #e74c3c;
+            color: #e74c3c;
+        }
+
+        .light.yellow.active {
+            background: #f39c12;
+            color: #f39c12;
+        }
+
+        .light.green.active {
+            background: #2ecc71;
+            color: #2ecc71;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+        }
+
+        .honk-btn {
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            background: #f39c12;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            transition: all 0.1s;
+        }
+
+        .honk-btn:hover {
+            background: #e67e22;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+        }
+
+        .honk-btn:active {
+            transform: translateY(0);
+        }
+
+        .wobble {
+            animation: wobble 0.3s ease-in-out;
+        }
+
+        @keyframes wobble {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(-5deg); }
+            50% { transform: rotate(5deg); }
+            75% { transform: rotate(-3deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="scene">
+        <!-- Roads -->
+        <div class="road-horizontal">
+            <div class="lane-line lane-h" style="left: 50px;"></div>
+            <div class="lane-line lane-h" style="left: 150px;"></div>
+            <div class="lane-line lane-h" style="left: 250px;"></div>
+            <div class="lane-line lane-h" style="left: 550px;"></div>
+            <div class="lane-line lane-h" style="left: 650px;"></div>
+        </div>
+        <div class="road-vertical">
+            <div class="lane-line lane-v" style="top: 30px;"></div>
+            <div class="lane-line lane-v" style="top: 120px;"></div>
+            <div class="lane-line lane-v" style="top: 400px;"></div>
+            <div class="lane-line lane-v" style="top: 490px;"></div>
+        </div>
+
+        <!-- Crosswalks -->
+        <div class="crosswalk crosswalk-h top">
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+        </div>
+        <div class="crosswalk crosswalk-h bottom">
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+            <div class="stripe"></div>
+        </div>
+
+        <!-- Traffic Light -->
+        <div class="traffic-light top-left" id="trafficLight">
+            <div class="light red active"></div>
+            <div class="light yellow"></div>
+            <div class="light green"></div>
+        </div>
+
+        <!-- Car -->
+        <div class="car horizontal" id="car"></div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <button class="honk-btn" id="honkBtn">🚗 HONK! 📢</button>
+        </div>
+    </div>
+
+    <script>
+        const car = document.getElementById('car');
+        const trafficLight = document.getElementById('trafficLight');
+        const honkBtn = document.getElementById('honkBtn');
+        const scene = document.querySelector('.scene');
+        
+        let lightState = 'red'; // red, yellow, green
+        let carPosition = -80;
+        let carSpeed = 0;
+        let isCarStopped = false;
+        let pedestrians = [];
+        let gameStarted = false;
+
+        // Initialize car off-screen
+        car.style.left = carPosition + 'px';
+        car.style.top = '230px';
+
+        // Traffic light toggle
+        trafficLight.addEventListener('click', () => {
+            const lights = trafficLight.querySelectorAll('.light');
+            lights.forEach(l => l.classList.remove('active'));
+
+            if (lightState === 'red') {
+                lightState = 'yellow';
+                lights[1].classList.add('active');
+                setTimeout(() => {
+                    lights[1].classList.remove('active');
+                    lights[2].classList.add('active');
+                    lightState = 'green';
+                    startCars();
+                    clearPedestrians();
+                }, 1000);
+            } else if (lightState === 'green') {
+                lightState = 'yellow';
+                lights[2].classList.remove('active');
+                lights[1].classList.add('active');
+                setTimeout(() => {
+                    lights[1].classList.remove('active');
+                    lights[0].classList.add('active');
+                    lightState = 'red';
+                    stopCars();
+                    spawnPedestrians();
+                }, 1000);
+            } else if (lightState === 'yellow') {
+                // Skip yellow
+                lights[1].classList.remove('active');
+                lights[0].classList.add('active');
+                lightState = 'red';
+                stopCars();
+                spawnPedestrians();
+            }
+        });
+
+        // Honk button
+        honkBtn.addEventListener('click', () => {
+            // Wobble nearby elements
+            const elements = [trafficLight, car, ...pedestrians.map(p => p.element)];
+            elements.forEach(el => {
+                if (el && el.parentNode) {
+                    el.classList.add('wobble');
+                    setTimeout(() => el.classList.remove('wobble'), 300);
+                }
+            });
+        });
+
+        // Car animation with dramatic entry
+        function startGame() {
+            if (gameStarted) return;
+            gameStarted = true;
+            carSpeed = 8;
+            animateCar();
+        }
+
+        function animateCar() {
+            if (carSpeed > 0) {
+                carPosition += carSpeed;
+                
+                // Stop at red light with skid
+                if (carPosition >= 180 && carPosition < 200 && lightState === 'red' && !isCarStopped) {
+                    carSpeed = 0;
+                    isCarStopped = true;
+                    createTireSmoke(carPosition, 230);
+                }
+                
+                // Move through on green
+                if (lightState === 'green' && isCarStopped) {
+                    isCarStopped = false;
+                    carSpeed = 6;
+                }
+                
+                car.style.left = carPosition + 'px';
+                
+                // Reset car when off screen
+                if (carPosition > 850) {
+                    carPosition = -80;
+                    carSpeed = 0;
+                    isCarStopped = false;
+                    if (lightState === 'green') {
+                        setTimeout(() => {
+                            carSpeed = 8;
+                        }, 1000);
+                    }
+                }
+                
+                requestAnimationFrame(animateCar);
+            } else {
+                requestAnimationFrame(animateCar);
+            }
+        }
+
+        function createTireSmoke(x, y) {
+            const smoke1 = document.createElement('div');
+            smoke1.className = 'tire-smoke';
+            smoke1.style.left = (x + 10) + 'px';
+            smoke1.style.top = (y + 30) + 'px';
+            scene.appendChild(smoke1);
+            
+            const smoke2 = document.createElement('div');
+            smoke2.className = 'tire-smoke';
+            smoke2.style.left = (x + 35) + 'px';
+            smoke2.style.top = (y + 30) + 'px';
+            scene.appendChild(smoke2);
+            
+            setTimeout(() => {
+                smoke1.remove();
+                smoke2.remove();
+            }, 600);
+        }
+
+        function stopCars() {
+            carSpeed = 0;
+        }
+
+        function startCars() {
+            if (!isCarStopped) return;
+            isCarStopped = false;
+            carSpeed = 6;
+        }
+
+        function spawnPedestrians() {
+            // Clear existing
+            clearPedestrians();
+            
+            // Spawn 3-4 pedestrians
+            const count = 3 + Math.floor(Math.random() * 2);
+            for (let i = 0; i < count; i++) {
+                const ped = document.createElement('div');
+                ped.className = 'pedestrian';
+                const startX = 310;
+                const startY = 210 - 40 - (i * 35);
+                ped.style.left = startX + 'px';
+                ped.style.top = startY + 'px';
+                scene.appendChild(ped);
+                
+                const pedData = {
+                    element: ped,
+                    x: startX,
+                    y: startY,
+                    targetY: 390,
+                    speed: 1.5 + Math.random() * 0.5
+                };
+                pedestrians.push(pedData);
+                animatePedestrian(pedData);
+            }
+        }
+
+        function animatePedestrian(pedData) {
+            if (lightState === 'red' && pedData.y < pedData.targetY) {
+                pedData.y += pedData.speed;
+                pedData.element.style.top = pedData.y + 'px';
+                requestAnimationFrame(() => animatePedestrian(pedData));
+            } else if (pedData.y >= pedData.targetY) {
+                setTimeout(() => {
+                    pedData.element.remove();
+                    pedestrians = pedestrians.filter(p => p !== pedData);
+                }, 500);
+            }
+        }
+
+        function clearPedestrians() {
+            pedestrians.forEach(p => {
+                if (p.element && p.element.parentNode) {
+                    p.element.remove();
+                }
+            });
+            pedestrians = [];
+        }
+
+        // Start the scene with dramatic car entry
+        setTimeout(() => {
+            startGame();
+        }, 500);
+    </script>
+</body>
+</html>
