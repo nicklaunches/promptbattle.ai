@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Moon Landing Animation</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                background: #000;
+                overflow: hidden;
+            }
+            canvas {
+                display: block;
+                cursor: pointer;
+            }
+            #plantFlag {
+                position: absolute;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                padding: 12px 24px;
+                font-size: 16px;
+                font-family: "Courier New", monospace;
+                background: #1a1a2e;
+                color: #fff;
+                border: 2px solid #4a4a6a;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.3s;
+            }
+            #plantFlag:hover {
+                background: #2a2a4e;
+                border-color: #6a6a8a;
+            }
+            #plantFlag:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <button id="plantFlag">Plant Flag</button>
+        <script>
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+            const plantFlagBtn = document.getElementById("plantFlag");
+
+            // Set canvas size
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            resize();
+            window.addEventListener("resize", resize);
+
+            // Animation state
+            let animationPhase = "descent"; // descent, landing, astronautExit, walking, flagPlant, idle
+            let frameCount = 0;
+            let stars = [];
+            let dustParticles = [];
+            let footprints = [];
+
+            // Lunar module
+            let lander = {
+                x: 0,
+                y: 0,
+                targetY: 0,
+                thrusterOn: false,
+                landed: false,
+            };
+
+            // Astronaut
+            let astronaut = {
+                x: 0,
+                y: 0,
+                targetX: 0,
+                visible: false,
+                walking: false,
+                legAngle: 0,
+                armAngle: 0,
+                plantingFlag: false,
+                hopOffset: 0,
+                hopPhase: 0,
+            };
+
+            // Flag
+            let flag = {
+                x: 0,
+                y: 0,
+                height: 0,
+                targetHeight: 80,
+                planted: false,
+                waveOffset: 0,
+            };
+
+            // Ground level
+            let groundY = 0;
+
+            // Initialize stars
+            function initStars() {
+                stars = [];
+                for (let i = 0; i < 200; i++) {
+                    stars.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height * 0.7,
+                        size: Math.random() * 2 + 0.5,
+                        twinkle: Math.random() * Math.PI * 2,
+                    });
+                }
+            }
+
+            // Initialize animation
+            function init() {
+                groundY = canvas.height - 100;
+
+                lander.x = canvas.width / 2;
+                lander.y = -80;
+                lander.targetY = groundY - 60;
+                lander.thrusterOn = true;
+                lander.landed = false;
+
+                astronaut.x = lander.x;
+                astronaut.y = groundY;
+                astronaut.targetX = lander.x - 150;
+                astronaut.visible = false;
+                astronaut.walking = false;
+                astronaut.plantingFlag = false;
+                astronaut.hopOffset = 0;
+                astronaut.hopPhase = 0;
+
+                flag.x = 0;
+                flag.y = groundY;
+                flag.height = 0;
+                flag.planted = false;
+
+                dustParticles = [];
+                footprints = [];
+                animationPhase = "descent";
+                frameCount = 0;
+
+                initStars();
+                plantFlagBtn.disabled = true;
+            }
+
+            // Create dust particles
+            function createDust() {
+                for (let i = 0; i < 5; i++) {
+                    dustParticles.push({
+                        x: lander.x + (Math.random() - 0.5) * 60,
+                        y: groundY - 10,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: -Math.random() * 4 - 2,
+                        size: Math.random() * 8 + 4,
+                        alpha: 1,
+                        gravity: 0.05,
+                    });
+                }
+            }
+
+            // Draw stars
+            function drawStars() {
+                stars.forEach((star) => {
+                    star.twinkle += 0.05;
+                    const alpha = 0.5 + Math.sin(star.twinkle) * 0.5;
+                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            // Draw Earth
+            function drawEarth() {
+                const earthX = canvas.width - 120;
+                const earthY = 100;
+                const earthRadius = 50;
+
+                // Earth glow
+                const glow = ctx.createRadialGradient(
+                    earthX,
+                    earthY,
+                    earthRadius,
+                    earthX,
+                    earthY,
+                    earthRadius + 20
+                );
+                glow.addColorStop(0, "rgba(100, 150, 255, 0.3)");
+                glow.addColorStop(1, "rgba(100, 150, 255, 0)");
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(earthX, earthY, earthRadius + 20, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Earth body
+                const earthGrad = ctx.createRadialGradient(
+                    earthX - 15,
+                    earthY - 15,
+                    0,
+                    earthX,
+                    earthY,
+                    earthRadius
+                );
+                earthGrad.addColorStop(0, "#6B93D6");
+                earthGrad.addColorStop(0.5, "#4A7BC8");
+                earthGrad.addColorStop(1, "#1E4D8C");
+                ctx.fillStyle = earthGrad;
+                ctx.beginPath();
+                ctx.arc(earthX, earthY, earthRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Continents (simplified)
+                ctx.fillStyle = "#3D8B40";
+                ctx.beginPath();
+                ctx.ellipse(
+                    earthX - 10,
+                    earthY - 10,
+                    20,
+                    15,
+                    0.3,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(
+                    earthX + 15,
+                    earthY + 15,
+                    12,
+                    18,
+                    -0.5,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+
+                // Clouds
+                ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+                ctx.beginPath();
+                ctx.ellipse(
+                    earthX - 20,
+                    earthY - 5,
+                    15,
+                    5,
+                    0.2,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(
+                    earthX + 10,
+                    earthY + 5,
+                    12,
+                    4,
+                    -0.3,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+            }
+
+            // Draw lunar surface
+            function drawSurface() {
+                // Surface gradient
+                const surfGrad = ctx.createLinearGradient(
+                    0,
+                    groundY - 20,
+                    0,
+                    canvas.height
+                );
+                surfGrad.addColorStop(0, "#4a4a4a");
+                surfGrad.addColorStop(1, "#2a2a2a");
+                ctx.fillStyle = surfGrad;
+                ctx.fillRect(
+                    0,
+                    groundY - 20,
+                    canvas.width,
+                    canvas.height - groundY + 20
+                );
+
+                // Craters
+                ctx.fillStyle = "#3a3a3a";
+                [
+                    [100, groundY + 30, 40],
+                    [300, groundY + 50, 25],
+                    [canvas.width - 200, groundY + 40, 35],
+                    [canvas.width / 2 + 100, groundY + 60, 20],
+                    [50, groundY + 70, 15],
+                ].forEach(([cx, cy, r]) => {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = "#505050";
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                });
+            }
+
+            // Draw lunar module
+            function drawLander() {
+                const x = lander.x;
+                const y = lander.y;
+
+                // Legs
+                ctx.strokeStyle = "#888";
+                ctx.lineWidth = 3;
+                // Left leg
+                ctx.beginPath();
+                ctx.moveTo(x - 25, y + 20);
+                ctx.lineTo(x - 40, y + 50);
+                ctx.moveTo(x - 40, y + 50);
+                ctx.lineTo(x - 50, y + 50);
+                ctx.stroke();
+                // Right leg
+                ctx.beginPath();
+                ctx.moveTo(x + 25, y + 20);
+                ctx.lineTo(x + 40, y + 50);
+                ctx.moveTo(x + 40, y + 50);
+                ctx.lineTo(x + 50, y + 50);
+                ctx.stroke();
+
+                // Body (octagonal)
+                ctx.fillStyle = "#c0c0c0";
+                ctx.beginPath();
+                ctx.moveTo(x - 30, y - 10);
+                ctx.lineTo(x - 25, y - 30);
+                ctx.lineTo(x + 25, y - 30);
+                ctx.lineTo(x + 30, y - 10);
+                ctx.lineTo(x + 30, y + 15);
+                ctx.lineTo(x + 20, y + 25);
+                ctx.lineTo(x - 20, y + 25);
+                ctx.lineTo(x - 30, y + 15);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = "#666";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Gold foil details
+                ctx.fillStyle = "#DAA520";
+                ctx.fillRect(x - 20, y - 25, 15, 12);
+                ctx.fillRect(x + 5, y - 25, 15, 12);
+
+                // Window
+                ctx.fillStyle = "#1a1a2e";
+                ctx.beginPath();
+                ctx.arc(x, y - 5, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#888";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Thruster
+                if (lander.thrusterOn && !lander.landed) {
+                    const flameHeight = 30 + Math.random() * 20;
+                    const grad = ctx.createLinearGradient(
+                        x,
+                        y + 25,
+                        x,
+                        y + 25 + flameHeight
+                    );
+                    grad.addColorStop(0, "rgba(255, 200, 50, 0.9)");
+                    grad.addColorStop(0.3, "rgba(255, 100, 0, 0.7)");
+                    grad.addColorStop(1, "rgba(255, 50, 0, 0)");
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.moveTo(x - 15, y + 25);
+                    ctx.lineTo(x + 15, y + 25);
+                    ctx.lineTo(x + 5, y + 25 + flameHeight);
+                    ctx.lineTo(x - 5, y + 25 + flameHeight);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+
+                // Ladder
+                if (lander.landed) {
+                    ctx.strokeStyle = "#888";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x - 15, y + 25);
+                    ctx.lineTo(x - 25, groundY);
+                    ctx.moveTo(x - 10, y + 25);
+                    ctx.lineTo(x - 20, groundY);
+                    // Rungs
+                    for (let i = 0; i < 4; i++) {
+                        const ry = y + 30 + i * 12;
+                        ctx.moveTo(x - 14 - i * 2, ry);
+                        ctx.lineTo(x - 11 - i * 2, ry);
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            // Draw dust particles
+            function drawDust() {
+                dustParticles.forEach((p, i) => {
+                    p.x += p.vx;
+                    p.vy += p.gravity;
+                    p.y += p.vy;
+                    p.alpha -= 0.015;
+                    p.size *= 0.99;
+
+                    if (p.alpha > 0) {
+                        ctx.fillStyle = `rgba(150, 140, 130, ${p.alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+                dustParticles = dustParticles.filter((p) => p.alpha > 0);
+            }
+
+            // Draw astronaut
+            function drawAstronaut() {
+                if (!astronaut.visible) return;
+
+                const x = astronaut.x;
+                const y = astronaut.y - astronaut.hopOffset;
+
+                // Footprints
+                footprints.forEach((fp) => {
+                    ctx.fillStyle = "rgba(60, 60, 60, 0.6)";
+                    ctx.beginPath();
+                    ctx.ellipse(fp.x, fp.y, 6, 10, fp.angle, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Shadow
+                ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+                ctx.beginPath();
+                ctx.ellipse(x, groundY + 5, 15, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                const legSwing = astronaut.walking
+                    ? Math.sin(astronaut.legAngle) * 15
+                    : 0;
+
+                // Legs
+                ctx.strokeStyle = "#e0e0e0";
+                ctx.lineWidth = 8;
+                ctx.lineCap = "round";
+                // Left leg
+                ctx.beginPath();
+                ctx.moveTo(x - 5, y - 15);
+                ctx.lineTo(x - 8 - legSwing, y);
+                ctx.stroke();
+                // Right leg
+                ctx.beginPath();
+                ctx.moveTo(x + 5, y - 15);
+                ctx.lineTo(x + 8 + legSwing, y);
+                ctx.stroke();
+
+                // Body
+                ctx.fillStyle = "#e0e0e0";
+                ctx.beginPath();
+                ctx.ellipse(x, y - 25, 12, 15, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Backpack (PLSS)
+                ctx.fillStyle = "#c0c0c0";
+                ctx.fillRect(x + 8, y - 38, 10, 20);
+
+                // Arms
+                const armSwing = astronaut.walking
+                    ? Math.sin(astronaut.legAngle + Math.PI) * 10
+                    : 0;
+                ctx.strokeStyle = "#e0e0e0";
+                ctx.lineWidth = 6;
+
+                if (astronaut.plantingFlag) {
+                    // Arms raised for flag planting
+                    ctx.beginPath();
+                    ctx.moveTo(x - 10, y - 28);
+                    ctx.lineTo(x - 25, y - 45);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x + 10, y - 28);
+                    ctx.lineTo(x + 25, y - 45);
+                    ctx.stroke();
+                } else {
+                    // Left arm
+                    ctx.beginPath();
+                    ctx.moveTo(x - 10, y - 28);
+                    ctx.lineTo(x - 18 + armSwing, y - 15);
+                    ctx.stroke();
+                    // Right arm
+                    ctx.beginPath();
+                    ctx.moveTo(x + 10, y - 28);
+                    ctx.lineTo(x + 18 - armSwing, y - 15);
+                    ctx.stroke();
+                }
+
+                // Helmet
+                ctx.fillStyle = "#f0f0f0";
+                ctx.beginPath();
+                ctx.arc(x, y - 42, 12, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Visor
+                ctx.fillStyle = "#DAA520";
+                ctx.beginPath();
+                ctx.arc(x, y - 42, 9, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Visor reflection
+                ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+                ctx.beginPath();
+                ctx.arc(x - 3, y - 45, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Draw flag
+            function drawFlag() {
+                if (flag.height <= 0) return;
+
+                const x = flag.x;
+                const y = flag.y;
+
+                // Pole
+                ctx.strokeStyle = "#aaa";
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x, y - flag.height);
+                ctx.stroke();
+
+                // Flag fabric with wave
+                if (flag.height > 40) {
+                    const flagWidth = 50;
+                    const flagHeight = 30;
+                    const waveAmp = 3;
+
+                    ctx.save();
+                    ctx.translate(x, y - flag.height);
+
+                    // Draw wavy flag
+                    for (let row = 0; row < flagHeight; row++) {
+                        for (let col = 0; col < flagWidth; col++) {
+                            const wave =
+                                Math.sin(
+                                    col / 10 + flag.waveOffset + row / 20
+                                ) * waveAmp;
+                            const px = col + wave;
+                            const py = row;
+
+                            // Determine color based on position
+                            let color;
+                            if (row < 16 && col < 20) {
+                                // Blue canton
+                                color = "#3C3B6E";
+                                // Stars (simplified)
+                                if (row % 4 === 2 && col % 5 === 2) {
+                                    color = "#fff";
+                                }
+                            } else {
+                                // Stripes
+                                const stripeIndex = Math.floor(
+                                    row / (flagHeight / 13)
+                                );
+                                color =
+                                    stripeIndex % 2 === 0 ? "#B22234" : "#fff";
+                            }
+
+                            ctx.fillStyle = color;
+                            ctx.fillRect(px, py, 1.5, 1.5);
+                        }
+                    }
+
+                    ctx.restore();
+                }
+            }
+
+            // Update animation
+            function update() {
+                frameCount++;
+
+                switch (animationPhase) {
+                    case "descent":
+                        if (lander.y < lander.targetY) {
+                            lander.y += 2;
+                            if (lander.y > groundY - 150) {
+                                createDust();
+                            }
+                        } else {
+                            lander.thrusterOn = false;
+                            lander.landed = true;
+                            animationPhase = "landing";
+                            frameCount = 0;
+                        }
+                        break;
+
+                    case "landing":
+                        // Wait a moment after landing
+                        if (frameCount > 60) {
+                            astronaut.visible = true;
+                            astronaut.x = lander.x - 20;
+                            animationPhase = "astronautExit";
+                            frameCount = 0;
+                        }
+                        break;
+
+                    case "astronautExit":
+                        // Astronaut hops down from ladder
+                        if (frameCount < 30) {
+                            astronaut.hopOffset =
+                                Math.sin((frameCount / 30) * Math.PI) * 20;
+                        } else {
+                            astronaut.hopOffset = 0;
+                            astronaut.walking = true;
+                            animationPhase = "walking";
+                        }
+                        break;
+
+                    case "walking":
+                        astronaut.legAngle += 0.15;
+                        astronaut.hopPhase += 0.15;
+                        astronaut.hopOffset =
+                            Math.abs(Math.sin(astronaut.hopPhase)) * 8;
+
+                        if (astronaut.x > astronaut.targetX) {
+                            astronaut.x -= 1.5;
+
+                            // Add footprints
+                            if (frameCount % 20 === 0) {
+                                footprints.push({
+                                    x: astronaut.x + (Math.random() - 0.5) * 10,
+                                    y: groundY + 2,
+                                    angle: (Math.random() - 0.5) * 0.3,
+                                });
+                            }
+                        } else {
+                            astronaut.walking = false;
+                            astronaut.hopOffset = 0;
+                            animationPhase = "flagPlant";
+                            frameCount = 0;
+                            flag.x = astronaut.x - 30;
+                            astronaut.plantingFlag = true;
+                        }
+                        break;
+
+                    case "flagPlant":
+                        if (flag.height < flag.targetHeight) {
+                            flag.height += 2;
+                        } else {
+                            flag.planted = true;
+                            if (frameCount > 60) {
+                                astronaut.plantingFlag = false;
+                                animationPhase = "idle";
+                                plantFlagBtn.disabled = false;
+                            }
+                        }
+                        break;
+
+                    case "idle":
+                        // Just wave the flag
+                        break;
+                }
+
+                // Always wave flag if planted
+                if (flag.planted) {
+                    flag.waveOffset += 0.05;
+                }
+            }
+
+            // Main draw function
+            function draw() {
+                // Clear canvas
+                ctx.fillStyle = "#0a0a15";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                drawStars();
+                drawEarth();
+                drawSurface();
+                drawDust();
+                drawFlag();
+                drawLander();
+                drawAstronaut();
+
+                update();
+                requestAnimationFrame(draw);
+            }
+
+            // Replay flag animation
+            function replayFlag() {
+                if (animationPhase !== "idle") return;
+
+                flag.height = 0;
+                flag.planted = false;
+                astronaut.plantingFlag = true;
+                animationPhase = "flagPlant";
+                frameCount = 0;
+                plantFlagBtn.disabled = true;
+            }
+
+            // Event listeners
+            canvas.addEventListener("click", () => {
+                init();
+            });
+
+            plantFlagBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                replayFlag();
+            });
+
+            // Start
+            init();
+            draw();
+        </script>
+    </body>
+</html>

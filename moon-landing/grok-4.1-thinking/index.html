@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Moon Landing Animation</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+                background: black;
+            }
+            canvas {
+                display: block;
+            }
+            #plantButton {
+                position: absolute;
+                top: 20px;
+                left: 20px;
+                z-index: 10;
+                padding: 10px 20px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <button id="plantButton">Plant Flag</button>
+
+        <script>
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+            const button = document.getElementById("plantButton");
+
+            let width, height, groundY;
+            let stars = [],
+                craters = [],
+                particles = [],
+                footprints = [];
+            let module = { x: 0, y: -200 };
+            let astronaut = { x: 0, y: 0, visible: false };
+            let flag = { x: 0, planted: false, animStart: 0 };
+            let animationStart = 0;
+            let lastStepTime = 0;
+
+            function resize() {
+                width = canvas.width = window.innerWidth;
+                height = canvas.height = window.innerHeight;
+                groundY = height * 0.85;
+
+                module.x = width / 2;
+                flag.x = width / 2 + 300;
+
+                stars = [];
+                for (let i = 0; i < 300; i++) {
+                    stars.push({
+                        x: Math.random() * width,
+                        y: Math.random() * height * 0.7,
+                        r: Math.random() * 1.5 + 0.5,
+                    });
+                }
+
+                craters = [];
+                for (let i = 0; i < 12; i++) {
+                    craters.push({
+                        x: Math.random() * width,
+                        y: groundY + (Math.random() * (height - groundY)) / 2,
+                        r: Math.random() * 40 + 20,
+                    });
+                }
+            }
+
+            function startAnimation() {
+                animationStart = performance.now();
+                particles = [];
+                footprints = [];
+                astronaut.visible = false;
+                astronaut.x = module.x;
+                flag.planted = false;
+                module.y = -200;
+                lastStepTime = 0;
+            }
+
+            function addThrusterParticles(count = 15) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.PI + (Math.random() - 0.5) * 0.6;
+                    const speed = 6 + Math.random() * 8;
+                    particles.push({
+                        x: module.x + (Math.random() - 0.5) * 50,
+                        y: module.y + 70,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 1,
+                        color: ["orange", "yellow", "white"][
+                            Math.floor(Math.random() * 3)
+                        ],
+                    });
+                }
+            }
+
+            function addDustParticles(count = 30) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 2;
+                    particles.push({
+                        x: module.x + (Math.random() - 0.5) * 80,
+                        y: groundY,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 2,
+                        life: 1,
+                        size: Math.random() * 5 + 3,
+                        color: "gray",
+                    });
+                }
+            }
+
+            function updateParticles() {
+                particles = particles.filter((p) => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.08; // gravity
+                    p.life -= 0.015;
+                    return p.life > 0;
+                });
+            }
+
+            function drawParticles() {
+                for (let p of particles) {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size || 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawLunarModule() {
+                const mx = module.x;
+                const my = module.y;
+
+                // body
+                ctx.fillStyle = "#ffd700";
+                ctx.fillRect(mx - 40, my - 60, 80, 100);
+
+                // dish
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath();
+                ctx.arc(mx, my - 70, 20, 0, Math.PI * 2);
+                ctx.fill();
+
+                // legs
+                ctx.fillStyle = "#aaaaaa";
+                ctx.fillRect(mx - 60, my + 40, 20, 60);
+                ctx.fillRect(mx + 40, my + 40, 20, 60);
+                ctx.fillRect(mx - 70, my + 100, 40, 10);
+                ctx.fillRect(mx + 30, my + 100, 40, 10);
+            }
+
+            function drawAstronaut(time) {
+                const ax = astronaut.x;
+                let ay = astronaut.y;
+                const walkTime = time - animationStart - 15000; // walking starts ~15s in
+
+                const legSwing = Math.sin(walkTime / 100) * 25;
+                const bob = Math.abs(Math.sin(walkTime / 100)) * 8;
+                ay -= bob;
+
+                // head
+                ctx.fillStyle = "white";
+                ctx.beginPath();
+                ctx.arc(ax, ay - 40, 15, 0, Math.PI * 2);
+                ctx.fill();
+
+                // visor
+                ctx.fillStyle = "#daa520";
+                ctx.beginPath();
+                ctx.arc(ax, ay - 40, 10, 0, Math.PI * 2);
+                ctx.fill();
+
+                // body
+                ctx.fillStyle = "white";
+                ctx.fillRect(ax - 20, ay - 30, 40, 60);
+
+                // arms
+                ctx.strokeStyle = "white";
+                ctx.lineWidth = 10;
+                ctx.beginPath();
+                ctx.moveTo(ax - 20, ay - 10);
+                ctx.lineTo(ax - 35, ay + 15);
+                ctx.moveTo(ax + 20, ay - 10);
+                ctx.lineTo(ax + 35, ay + 15);
+                ctx.stroke();
+
+                // legs
+                ctx.beginPath();
+                ctx.moveTo(ax - 10, ay + 30);
+                ctx.lineTo(ax - 10 + legSwing, ay + 70);
+                ctx.moveTo(ax + 10, ay + 30);
+                ctx.lineTo(ax + 10 - legSwing, ay + 70);
+                ctx.stroke();
+            }
+
+            function drawFlag(time) {
+                const t = (time - flag.animStart) / 1000;
+                const appear = Math.min(t / 1.5, 1);
+                const fx = flag.x;
+                const fy = groundY;
+
+                // pole
+                ctx.strokeStyle = "#cccccc";
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.moveTo(fx, fy);
+                ctx.lineTo(fx, fy - 170 * appear);
+                ctx.stroke();
+
+                const flagW = 140 * appear;
+                const flagH = 75 * appear;
+                const amplitude = 20;
+                const phase = t * 1.8;
+
+                ctx.save();
+                ctx.translate(fx, fy - 170 * appear);
+
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                const segments = 15;
+                for (let i = 1; i <= segments; i++) {
+                    const prog = i / segments;
+                    const x = prog * flagW;
+                    const y = Math.sin(prog * 4 + phase) * amplitude * prog;
+                    ctx.quadraticCurveTo(x - flagW / (segments * 2), y, x, y);
+                }
+                ctx.lineTo(flagW, flagH);
+                ctx.lineTo(0, flagH);
+                ctx.closePath();
+                ctx.clip();
+
+                // stripes
+                const stripeH = flagH / 13;
+                ctx.fillStyle = "#b22234";
+                for (let i = 0; i < 13; i += 2) {
+                    ctx.fillRect(0, i * stripeH, flagW, stripeH);
+                }
+                ctx.fillStyle = "#ffffff";
+                for (let i = 1; i < 13; i += 2) {
+                    ctx.fillRect(0, i * stripeH, flagW, stripeH);
+                }
+
+                // blue canton
+                ctx.fillStyle = "#3c3b6e";
+                ctx.fillRect(0, 0, flagW * 0.4, stripeH * 7);
+
+                // stars (simple circles)
+                ctx.fillStyle = "#ffffff";
+                const starR = stripeH * 0.35;
+                const starSpacingX = (flagW * 0.4) / 11;
+                const starSpacingY = (stripeH * 7) / 9;
+                for (let row = 0; row < 9; row++) {
+                    const cols = row % 2 === 0 ? 6 : 5;
+                    const offset = row % 2 === 0 ? starSpacingX / 2 : 0;
+                    for (let col = 0; col < cols; col++) {
+                        const sx = starSpacingX * (col + 1) + offset;
+                        const sy = starSpacingY * (row + 0.8);
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, starR, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function animate(time) {
+                ctx.fillStyle = "black";
+                ctx.fillRect(0, 0, width, height);
+
+                // stars
+                ctx.fillStyle = "white";
+                for (let s of stars) {
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Earth
+                const earthR = height * 0.1;
+                ctx.fillStyle = "#4169e1";
+                ctx.beginPath();
+                ctx.arc(width * 0.15, height * 0.15, earthR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#228b22";
+                ctx.beginPath();
+                ctx.arc(
+                    width * 0.15 + earthR * 0.3,
+                    height * 0.15,
+                    earthR * 0.35,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+
+                // ground
+                ctx.fillStyle = "#b0b0b0";
+                ctx.fillRect(0, groundY, width, height - groundY);
+
+                // craters
+                ctx.fillStyle = "#808080";
+                for (let c of craters) {
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // footprints
+                ctx.fillStyle = "#606060";
+                for (let f of footprints) {
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        f,
+                        groundY + 20,
+                        12,
+                        28,
+                        Math.PI / 8,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+
+                const elapsed = time - animationStart;
+
+                // Module descent (10s)
+                if (elapsed < 10000) {
+                    const prog = elapsed / 10000;
+                    module.y = -200 + prog * height;
+                    if (prog > 0.6) addThrusterParticles();
+                    if (prog > 0.85) addDustParticles(40);
+                } else {
+                    module.y = groundY - 80;
+                }
+
+                // Extra dust after landing
+                if (elapsed > 10000 && elapsed < 13000) addDustParticles(20);
+
+                // Astronaut sequence
+                if (elapsed > 13000) {
+                    astronaut.visible = true;
+                    const astroTime = elapsed - 13000;
+
+                    if (astroTime < 4000) {
+                        // descend ladder
+                        astronaut.y = module.y + 80 + (astroTime / 4000) * 120;
+                        astronaut.x = module.x;
+                    } else if (astroTime < 7000) {
+                        // bounce/hop
+                        const hop = astroTime - 4000;
+                        const bounce =
+                            -Math.abs(Math.sin((hop / 500) * Math.PI)) * 60;
+                        astronaut.y = groundY + bounce;
+                        astronaut.x = module.x + (hop / 3000) * 80;
+                    } else {
+                        // walk
+                        astronaut.x = module.x + 80 + (astroTime - 7000) * 0.08;
+                        astronaut.y = groundY;
+                        if (astronaut.x > flag.x - 60) {
+                            astronaut.x = flag.x - 60;
+                            if (!flag.planted) {
+                                flag.planted = true;
+                                flag.animStart = time;
+                            }
+                        }
+
+                        // footprints
+                        if (time - lastStepTime > 700) {
+                            lastStepTime = time;
+                            footprints.push(astronaut.x - 15);
+                            footprints.push(astronaut.x + 15);
+                        }
+                    }
+                }
+
+                updateParticles();
+                drawParticles();
+                drawLunarModule();
+                if (astronaut.visible) drawAstronaut(time);
+                if (flag.planted) drawFlag(time);
+
+                requestAnimationFrame(animate);
+            }
+
+            resize();
+            window.addEventListener("resize", resize);
+            startAnimation();
+            requestAnimationFrame(animate);
+
+            button.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (flag.planted) {
+                    flag.animStart = performance.now();
+                }
+            });
+
+            canvas.addEventListener("click", startAnimation);
+        </script>
+    </body>
+</html>

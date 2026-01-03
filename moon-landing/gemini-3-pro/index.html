@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Moon Landing Animation</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                background: black;
+                color: white;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont,
+                    sans-serif;
+                height: 100%;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: flex-start;
+            }
+            #container {
+                margin-top: 10px;
+                text-align: center;
+            }
+            canvas {
+                display: block;
+                background: radial-gradient(
+                    ellipse at top,
+                    #050815 0%,
+                    #000000 60%
+                );
+                border: 1px solid #333;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            #controls {
+                margin-top: 8px;
+            }
+            button {
+                background: #1a1a1a;
+                color: #fff;
+                border: 1px solid #555;
+                padding: 6px 14px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            button:hover {
+                background: #292929;
+            }
+            small {
+                color: #aaa;
+                display: block;
+                margin-top: 4px;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="container">
+            <canvas id="scene" width="800" height="450"></canvas>
+            <div id="controls">
+                <button id="flagBtn">Plant Flag</button>
+                <small
+                    >Click anywhere on the sky or ground to replay the whole
+                    landing.</small
+                >
+            </div>
+        </div>
+
+        <script>
+            (function () {
+                const canvas = document.getElementById("scene");
+                const ctx = canvas.getContext("2d");
+
+                const W = canvas.width;
+                const H = canvas.height;
+
+                // Moon surface parameters
+                const horizonY = H * 0.7;
+
+                // Stars
+                const stars = [];
+                const STAR_COUNT = 120;
+                for (let i = 0; i < STAR_COUNT; i++) {
+                    stars.push({
+                        x: Math.random() * W,
+                        y: Math.random() * horizonY * 0.9,
+                        r: Math.random() * 1.4 + 0.4,
+                        twinkle: Math.random() * Math.PI * 2,
+                    });
+                }
+
+                // Earth in sky
+                const earth = {
+                    x: W * 0.15,
+                    y: H * 0.18,
+                    r: 35,
+                };
+
+                // Lunar Module
+                const lm = {
+                    x: W * 0.55,
+                    y: H * 0.1, // animated
+                    width: 60,
+                    height: 50,
+                };
+                const lmTargetY = horizonY - 60;
+                const lmStartY = -100;
+
+                // Astronaut
+                const astro = {
+                    x: lm.x - 10,
+                    y: lmTargetY - 35,
+                    startX: null,
+                    startY: null,
+                    endX: W * 0.4,
+                    endY: lmTargetY - 5,
+                };
+                astro.startX = astro.x;
+                astro.startY = astro.y;
+
+                const footprints = [];
+
+                // Flag
+                const flag = {
+                    x: astro.endX + 15,
+                    y: horizonY - 5,
+                    height: 45,
+                    width: 40,
+                    baseWaveAmp: 2,
+                    pulseAmp: 10,
+                    pulseStart: null,
+                };
+
+                // Dust particles
+                const dustParticles = [];
+                const MAX_DUST = 120;
+
+                // Animation phases
+                const PHASES = {
+                    DESCENT: "descent",
+                    TOUCHDOWN_DUST: "touchdown_dust",
+                    ASTRONAUT_WALK: "astronaut_walk",
+                    PLANT_FLAG: "plant_flag",
+                    IDLE: "idle",
+                };
+
+                let phase = PHASES.DESCENT;
+                let phaseStart = performance.now();
+
+                const durations = {
+                    descent: 6000,
+                    touchdown_dust: 4000,
+                    astronaut_walk: 5500,
+                    plant_flag: 2500,
+                };
+
+                function resetScene() {
+                    phase = PHASES.DESCENT;
+                    phaseStart = performance.now();
+                    lm.y = lmStartY;
+                    astro.x = astro.startX;
+                    astro.y = astro.startY;
+                    footprints.length = 0;
+                    dustParticles.length = 0;
+                    flag.pulseStart = null;
+                }
+
+                function advancePhase(nextPhase) {
+                    phase = nextPhase;
+                    phaseStart = performance.now();
+                }
+
+                function spawnDust(intensity) {
+                    const baseY = horizonY - 2;
+                    for (let i = 0; i < intensity; i++) {
+                        if (dustParticles.length >= MAX_DUST) break;
+                        const spread = 50;
+                        dustParticles.push({
+                            x:
+                                lm.x +
+                                lm.width / 2 +
+                                (Math.random() - 0.5) * spread,
+                            y: baseY,
+                            vy: -Math.random() * 1.2 - 0.5,
+                            vx: (Math.random() - 0.5) * 0.6,
+                            life: Math.random() * 0.6 + 0.4,
+                        });
+                    }
+                }
+
+                function updateDust(dt) {
+                    for (let i = dustParticles.length - 1; i >= 0; i--) {
+                        const p = dustParticles[i];
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.vy += 0.9 * dt; // gentle gravity
+                        p.life -= dt * 0.7;
+                        if (p.life <= 0 || p.y > horizonY + 5) {
+                            dustParticles.splice(i, 1);
+                        }
+                    }
+                }
+
+                function drawDust() {
+                    ctx.save();
+                    ctx.fillStyle = "rgba(190, 190, 190, 0.65)";
+                    for (const p of dustParticles) {
+                        ctx.beginPath();
+                        ctx.ellipse(p.x, p.y, 4, 2, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawStars(time) {
+                    ctx.save();
+                    for (const s of stars) {
+                        const tw = 0.5 + 0.5 * Math.sin(time * 2 + s.twinkle);
+                        const alpha = 0.4 + 0.6 * tw;
+                        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(s.x, s.y, s.r * tw, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawEarth(time) {
+                    ctx.save();
+                    const glow = 0.5 + 0.5 * Math.sin(time * 0.3);
+                    const grad = ctx.createRadialGradient(
+                        earth.x - earth.r * 0.2,
+                        earth.y - earth.r * 0.2,
+                        earth.r * 0.4,
+                        earth.x,
+                        earth.y,
+                        earth.r
+                    );
+                    grad.addColorStop(0, "#4fd0ff");
+                    grad.addColorStop(1, "#0a1950");
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(earth.x, earth.y, earth.r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Simple continents
+                    ctx.fillStyle = `rgba(46, 204, 113, ${0.9 + glow * 0.1})`;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        earth.x - 5,
+                        earth.y,
+                        12,
+                        18,
+                        0.5,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        earth.x + 10,
+                        earth.y - 10,
+                        8,
+                        12,
+                        -0.3,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+
+                    // Thin atmosphere ring
+                    ctx.strokeStyle = `rgba(135,206,250,${0.4 + glow * 0.2})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(earth.x, earth.y, earth.r + 2, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                function drawSurface() {
+                    // Ground
+                    const grad = ctx.createLinearGradient(0, horizonY, 0, H);
+                    grad.addColorStop(0, "#666");
+                    grad.addColorStop(1, "#222");
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, horizonY, W, H - horizonY);
+
+                    // Horizon edge
+                    ctx.strokeStyle = "#999";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(0, horizonY);
+                    ctx.lineTo(W, horizonY);
+                    ctx.stroke();
+
+                    // Craters
+                    ctx.save();
+                    ctx.fillStyle = "#555";
+                    ctx.globalAlpha = 0.9;
+                    const craters = [
+                        { x: 120, r: 25 },
+                        { x: 320, r: 18 },
+                        { x: 580, r: 22 },
+                        { x: 720, r: 16 },
+                    ];
+                    for (const c of craters) {
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            c.x,
+                            horizonY + 10,
+                            c.r * 1.5,
+                            c.r,
+                            0,
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                        ctx.strokeStyle = "#777";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                function drawLM(thrustersOn, time) {
+                    ctx.save();
+                    ctx.translate(lm.x, lm.y);
+
+                    // Landing legs
+                    ctx.strokeStyle = "#c0c0c0";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(10, lm.height);
+                    ctx.lineTo(-10, lm.height + 20);
+                    ctx.moveTo(lm.width - 10, lm.height);
+                    ctx.lineTo(lm.width + 10, lm.height + 20);
+                    ctx.stroke();
+
+                    // Body
+                    ctx.fillStyle = "#f0f0f0";
+                    ctx.fillRect(0, 0, lm.width, lm.height);
+
+                    // Window
+                    ctx.fillStyle = "#1f3b70";
+                    ctx.beginPath();
+                    ctx.arc(lm.width / 2, lm.height * 0.35, 9, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Lower stage
+                    ctx.fillStyle = "#b0b0b0";
+                    ctx.fillRect(5, lm.height - 12, lm.width - 10, 12);
+
+                    // Ladder
+                    ctx.strokeStyle = "#cccccc";
+                    ctx.lineWidth = 2;
+                    const ladderX = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(ladderX, lm.height);
+                    ctx.lineTo(ladderX, lm.height + 30);
+                    ctx.stroke();
+                    ctx.lineWidth = 1.5;
+                    for (let i = 0; i < 5; i++) {
+                        const y = lm.height + 4 + i * 5;
+                        ctx.beginPath();
+                        ctx.moveTo(ladderX - 5, y);
+                        ctx.lineTo(ladderX + 5, y);
+                        ctx.stroke();
+                    }
+
+                    // Thrusters
+                    if (thrustersOn) {
+                        const flameTime = (Math.sin(time * 20) + 1) / 2;
+                        const flameH = 25 + flameTime * 15;
+                        const flameW = 12 + flameTime * 6;
+                        ctx.save();
+                        const cx = lm.width / 2;
+                        const cy = lm.height + 2;
+                        const grad = ctx.createLinearGradient(
+                            cx,
+                            cy,
+                            cx,
+                            cy + flameH
+                        );
+                        grad.addColorStop(0, "rgba(255, 255, 200, 0.95)");
+                        grad.addColorStop(0.4, "rgba(255, 180, 70, 0.9)");
+                        grad.addColorStop(1, "rgba(255, 80, 0, 0)");
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(cx - flameW / 2, cy);
+                        ctx.lineTo(cx + flameW / 2, cy);
+                        ctx.lineTo(cx, cy + flameH);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.restore();
+                    }
+
+                    ctx.restore();
+                }
+
+                function drawAstronaut(time, isMoving, hasFlag) {
+                    ctx.save();
+                    ctx.translate(astro.x, astro.y);
+
+                    // Body sway
+                    const sway = isMoving
+                        ? Math.sin(time * 9) * 1.5
+                        : Math.sin(time * 2) * 0.5;
+                    ctx.translate(0, sway);
+
+                    // Footprints (already placed in world coords)
+                    ctx.save();
+                    ctx.fillStyle = "rgba(40,40,40,0.95)";
+                    for (const fp of footprints) {
+                        ctx.beginPath();
+                        ctx.ellipse(fp.x, fp.y, 6, 2, 0.1, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+
+                    // Backpack
+                    ctx.fillStyle = "#d0d0d0";
+                    ctx.fillRect(-5, -30, 8, 16);
+
+                    // Body
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(-4, -26, 14, 22);
+
+                    // Legs
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -4);
+                    ctx.lineTo(-4, 5);
+                    ctx.moveTo(4, -4);
+                    ctx.lineTo(8, 5);
+                    ctx.stroke();
+
+                    // Arms
+                    ctx.beginPath();
+                    ctx.moveTo(0, -20);
+                    ctx.lineTo(-8, -14);
+                    ctx.moveTo(0, -20);
+                    ctx.lineTo(10, -14);
+                    ctx.stroke();
+
+                    // Helmet
+                    ctx.fillStyle = "#fdfdfd";
+                    ctx.beginPath();
+                    ctx.arc(3, -32, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#111522";
+                    ctx.beginPath();
+                    ctx.arc(3, -32, 5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Small US flag patch
+                    ctx.fillStyle = "#d00";
+                    ctx.fillRect(6, -22, 5, 3);
+                    ctx.fillStyle = "#fff";
+                    ctx.fillRect(6, -21, 5, 1);
+                    ctx.fillStyle = "#0052a5";
+                    ctx.fillRect(6, -22, 2, 2);
+
+                    ctx.restore();
+                }
+
+                function drawFlag(time, fromButtonPulse) {
+                    const poleX = flag.x;
+                    const poleY = flag.y;
+                    const topY = poleY - flag.height;
+
+                    // Determine wave amplitude
+                    let amp = flag.baseWaveAmp;
+                    if (flag.pulseStart != null) {
+                        const t = (time - flag.pulseStart) / 1.2;
+                        if (t < 1.2) {
+                            const falloff = Math.exp(-t * 1.5);
+                            amp += flag.pulseAmp * falloff;
+                        } else {
+                            flag.pulseStart = null;
+                        }
+                    }
+
+                    ctx.save();
+
+                    // Pole
+                    ctx.strokeStyle = "#d0d0d0";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(poleX, poleY);
+                    ctx.lineTo(poleX, topY);
+                    ctx.stroke();
+
+                    // Flag cloth (simple waving polygon)
+                    const w = flag.width;
+                    const h = flag.height * 0.6;
+                    const segments = 6;
+                    const baseX = poleX;
+                    const baseY = topY + 4;
+
+                    const points = [];
+                    for (let i = 0; i <= segments; i++) {
+                        const px = baseX + (w * i) / segments;
+                        const localPhase = time * 4 + (i / segments) * Math.PI;
+                        const offset = Math.sin(localPhase) * amp;
+                        const pyTop = baseY + offset;
+                        const pyBot = baseY + h + offset * 0.6;
+                        points.push({
+                            xTop: px,
+                            yTop: pyTop,
+                            xBot: px,
+                            yBot: pyBot,
+                        });
+                    }
+
+                    // Red stripes
+                    ctx.beginPath();
+                    ctx.moveTo(baseX, baseY);
+                    for (let i = 0; i <= segments; i++) {
+                        ctx.lineTo(points[i].xTop, points[i].yTop);
+                    }
+                    for (let i = segments; i >= 0; i--) {
+                        ctx.lineTo(points[i].xBot, points[i].yBot);
+                    }
+                    ctx.closePath();
+                    const grad = ctx.createLinearGradient(
+                        baseX,
+                        baseY,
+                        baseX,
+                        baseY + h
+                    );
+                    grad.addColorStop(0, "#ffefef");
+                    grad.addColorStop(1, "#d00");
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+                    ctx.stroke();
+
+                    // Blue canton (top-left)
+                    ctx.save();
+                    ctx.beginPath();
+                    const cantonW = w * 0.35;
+                    const cantonH = h * 0.55;
+                    for (let i = 0; i <= segments; i++) {
+                        const frac = i / segments;
+                        if (points[i].xTop <= baseX + cantonW + 0.5) {
+                            if (i === 0) {
+                                ctx.moveTo(points[i].xTop, points[i].yTop);
+                            } else {
+                                ctx.lineTo(points[i].xTop, points[i].yTop);
+                            }
+                        }
+                    }
+                    for (let i = segments; i >= 0; i--) {
+                        const px = points[i].xBot;
+                        if (px <= baseX + cantonW + 0.5) {
+                            ctx.lineTo(points[i].xBot, points[i].yBot);
+                        }
+                    }
+                    ctx.closePath();
+                    ctx.clip();
+                    ctx.fillStyle = "#123d88";
+                    ctx.fillRect(
+                        baseX,
+                        baseY - 2 * amp,
+                        cantonW,
+                        cantonH + 4 * amp
+                    );
+
+                    // Simple stars as small dots
+                    ctx.fillStyle = "#fff";
+                    const rows = 3;
+                    const cols = 4;
+                    for (let r = 0; r < rows; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            const sx = baseX + 3 + (c + 0.4) * (cantonW / cols);
+                            const sy = baseY + 3 + (r + 0.4) * (cantonH / rows);
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, 0.7, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
+
+                    ctx.restore();
+                }
+
+                function triggerFlagPulse() {
+                    flag.pulseStart = performance.now();
+                }
+
+                function updateScene(dt, time) {
+                    const now = performance.now();
+                    const tPhase = now - phaseStart;
+
+                    if (phase === PHASES.DESCENT) {
+                        const p = Math.min(tPhase / durations.descent, 1);
+                        // Ease out cubic
+                        const eased = 1 - Math.pow(1 - p, 3);
+                        lm.y = lmStartY + (lmTargetY - lmStartY) * eased;
+
+                        // Spawn dust as we get close
+                        if (p > 0.7) {
+                            const intensity = Math.round(
+                                10 + (25 * (p - 0.7)) / 0.3
+                            );
+                            spawnDust(intensity);
+                        }
+
+                        if (p >= 1) {
+                            lm.y = lmTargetY;
+                            advancePhase(PHASES.TOUCHDOWN_DUST);
+                        }
+                    } else if (phase === PHASES.TOUCHDOWN_DUST) {
+                        // Strong dust initially, then fade
+                        const p = Math.min(
+                            tPhase / durations.touchdown_dust,
+                            1
+                        );
+                        const intensity = Math.round(35 * (1 - p));
+                        if (intensity > 0) spawnDust(intensity);
+                        if (p >= 1) {
+                            advancePhase(PHASES.ASTRONAUT_WALK);
+                        }
+                    } else if (phase === PHASES.ASTRONAUT_WALK) {
+                        const p = Math.min(
+                            tPhase / durations.astronaut_walk,
+                            1
+                        );
+                        astro.x =
+                            astro.startX + (astro.endX - astro.startX) * p;
+                        astro.y =
+                            astro.startY +
+                            (astro.endY - astro.startY) * p * 0.8;
+
+                        // Leave footprints along the way
+                        if (
+                            footprints.length === 0 ||
+                            tPhase - footprints[footprints.length - 1].time >
+                                350
+                        ) {
+                            footprints.push({
+                                x: astro.x + 5,
+                                y: astro.y + 7,
+                                time: tPhase,
+                            });
+                        }
+
+                        if (p >= 1) {
+                            advancePhase(PHASES.PLANT_FLAG);
+                        }
+                    } else if (phase === PHASES.PLANT_FLAG) {
+                        const p = Math.min(tPhase / durations.plant_flag, 1);
+                        // During planting, we trigger one strong pulse at start
+                        if (!flag.pulseStart) {
+                            triggerFlagPulse();
+                        }
+                        if (p >= 1) {
+                            advancePhase(PHASES.IDLE);
+                        }
+                    }
+
+                    updateDust(dt);
+                }
+
+                function render(time) {
+                    const t = time / 1000;
+
+                    ctx.clearRect(0, 0, W, H);
+
+                    drawStars(t);
+                    drawEarth(t);
+                    drawSurface();
+                    drawDust();
+
+                    const isThrustersOn =
+                        phase === PHASES.DESCENT ||
+                        phase === PHASES.TOUCHDOWN_DUST;
+
+                    drawLM(isThrustersOn, t);
+
+                    const astroMoving = phase === PHASES.ASTRONAUT_WALK;
+                    const astroHasFlag =
+                        phase === PHASES.PLANT_FLAG || phase === PHASES.IDLE;
+                    drawAstronaut(t, astroMoving, astroHasFlag);
+
+                    if (phase !== PHASES.DESCENT) {
+                        drawFlag(t, false);
+                    }
+
+                    requestAnimationFrame(loop);
+                }
+
+                let lastTime = performance.now();
+                function loop(timestamp) {
+                    const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+                    lastTime = timestamp;
+                    updateScene(dt, timestamp / 1000);
+                    render(timestamp);
+                }
+
+                // Interactions
+                canvas.addEventListener("click", function () {
+                    resetScene();
+                });
+                document.body.addEventListener("click", function (e) {
+                    // Avoid replay when clicking the button itself
+                    if (e.target.id === "flagBtn") return;
+                    if (e.target === canvas) return; // canvas already handled
+                    resetScene();
+                });
+
+                document
+                    .getElementById("flagBtn")
+                    .addEventListener("click", function (e) {
+                        e.stopPropagation();
+                        // Only meaningful after flag has appeared, but harmless otherwise
+                        triggerFlagPulse();
+                    });
+
+                // Start
+                resetScene();
+                requestAnimationFrame(loop);
+            })();
+        </script>
+    </body>
+</html>

@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Moon Landing Animation</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                background: #01030c;
+                overflow: hidden;
+                font-family: "Space Grotesk", "Segoe UI", system-ui,
+                    -apple-system, sans-serif;
+            }
+
+            canvas {
+                width: 100vw;
+                height: 100vh;
+                display: block;
+                cursor: pointer;
+            }
+
+            #flagBtn {
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                z-index: 10;
+                padding: 10px 18px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.4);
+                background: rgba(6, 17, 46, 0.85);
+                color: #f5f6ff;
+                font-size: 14px;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+                font-weight: 600;
+                cursor: pointer;
+                backdrop-filter: blur(6px);
+                transition: background 0.2s ease, transform 0.2s ease;
+            }
+
+            #flagBtn:hover {
+                background: rgba(27, 54, 110, 0.95);
+            }
+
+            #flagBtn:active {
+                transform: scale(0.96);
+            }
+
+            @media (max-width: 600px) {
+                #flagBtn {
+                    font-size: 12px;
+                    padding: 8px 14px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="scene"></canvas>
+        <button id="flagBtn" type="button">Plant Flag</button>
+        <script>
+            (() => {
+                const canvas = document.getElementById("scene");
+                const ctx = canvas.getContext("2d");
+                const flagBtn = document.getElementById("flagBtn");
+
+                const config = {
+                    descentDuration: 4500,
+                    dustTailDuration: 950,
+                    astronautStartDelay: 5200,
+                    astronautDuration: 4200,
+                };
+
+                const state = {
+                    startTime: null,
+                    dust: [],
+                    footprints: [],
+                    flagWaveStart: null,
+                    flagPlanted: false,
+                    lastFootprintX: null,
+                };
+
+                let stars = [];
+
+                const clamp = (value, min, max) =>
+                    Math.min(Math.max(value, min), max);
+                const easeOutQuad = (t) => 1 - (1 - t) * (1 - t);
+
+                function resize() {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                    createStars();
+                }
+
+                function createStars() {
+                    const count = Math.max(
+                        90,
+                        Math.floor((canvas.width * canvas.height) / 11000)
+                    );
+                    stars = Array.from({ length: count }, () => ({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height * 0.65,
+                        size: Math.random() * 1.6 + 0.4,
+                        twinkleSpeed: 0.0015 + Math.random() * 0.003,
+                        phase: Math.random() * Math.PI * 2,
+                    }));
+                }
+
+                function resetAnimation() {
+                    state.startTime = null;
+                    state.dust.length = 0;
+                    state.footprints.length = 0;
+                    state.flagWaveStart = null;
+                    state.flagPlanted = false;
+                    state.lastFootprintX = null;
+                }
+
+                window.addEventListener("resize", resize);
+                document.addEventListener("click", (event) => {
+                    if (event.target === flagBtn) return;
+                    resetAnimation();
+                });
+
+                flagBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    state.flagPlanted = true;
+                    state.flagWaveStart = performance.now();
+                });
+
+                resize();
+                requestAnimationFrame(loop);
+
+                function loop(timestamp) {
+                    if (!state.startTime) state.startTime = timestamp;
+                    const elapsed = timestamp - state.startTime;
+                    renderScene(elapsed, timestamp);
+                    requestAnimationFrame(loop);
+                }
+
+                function renderScene(elapsed, timestamp) {
+                    const w = canvas.width;
+                    const h = canvas.height;
+                    const groundY = h - Math.min(140, h * 0.2);
+
+                    ctx.clearRect(0, 0, w, h);
+                    drawSky(timestamp);
+                    drawEarth(w, h);
+                    drawGround(groundY);
+
+                    const module = {
+                        width: Math.min(130, w * 0.18),
+                        height: Math.min(160, h * 0.28),
+                    };
+                    const moduleX = w * 0.4 - module.width / 2;
+                    const moduleLandingY = groundY - module.height - 4;
+                    const startY = -module.height - 150;
+                    const descentProgress = clamp(
+                        elapsed / config.descentDuration,
+                        0,
+                        1
+                    );
+                    const moduleY =
+                        startY +
+                        (moduleLandingY - startY) *
+                            easeOutQuad(descentProgress);
+                    const thrusterActive =
+                        elapsed < config.descentDuration &&
+                        descentProgress > 0.35;
+
+                    const flagX =
+                        moduleX + module.width + Math.min(220, w * 0.2);
+
+                    const dusting =
+                        thrusterActive ||
+                        elapsed <
+                            config.descentDuration + config.dustTailDuration;
+                    if (dusting) spawnDust(moduleX, module.width, groundY);
+                    updateDust();
+                    drawDust();
+
+                    const astronautStart = config.astronautStartDelay;
+                    let astronautPos = null;
+                    if (elapsed > astronautStart) {
+                        const astronautProgress = clamp(
+                            (elapsed - astronautStart) /
+                                config.astronautDuration,
+                            0,
+                            1
+                        );
+                        astronautPos = getAstronautPosition(
+                            astronautProgress,
+                            moduleX,
+                            moduleLandingY,
+                            module,
+                            groundY,
+                            flagX
+                        );
+                        updateFootprints(
+                            astronautPos,
+                            astronautProgress,
+                            groundY
+                        );
+                        if (
+                            astronautPos &&
+                            astronautPos.planting &&
+                            !state.flagPlanted &&
+                            astronautPos.plantProgress > 0.3
+                        ) {
+                            state.flagPlanted = true;
+                            state.flagWaveStart = performance.now();
+                        }
+                    }
+
+                    drawFootprints();
+                    drawModule(
+                        moduleX,
+                        moduleY,
+                        module,
+                        thrusterActive,
+                        groundY
+                    );
+                    if (astronautPos) drawAstronaut(astronautPos, timestamp);
+                    drawFlag(flagX, groundY, timestamp);
+                    drawOverlayText();
+                }
+
+                function drawSky(timestamp) {
+                    const gradient = ctx.createLinearGradient(
+                        0,
+                        0,
+                        0,
+                        canvas.height
+                    );
+                    gradient.addColorStop(0, "#03071d");
+                    gradient.addColorStop(0.6, "#061031");
+                    gradient.addColorStop(1, "#090f20");
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.save();
+                    stars.forEach((star) => {
+                        const twinkle =
+                            0.5 +
+                            Math.sin(
+                                timestamp * star.twinkleSpeed + star.phase
+                            ) *
+                                0.5;
+                        ctx.globalAlpha = 0.2 + twinkle * 0.8;
+                        ctx.fillStyle = "#ffffff";
+                        ctx.beginPath();
+                        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                    ctx.restore();
+                }
+
+                function drawEarth(w, h) {
+                    const radius = Math.min(90, Math.min(w, h) * 0.15);
+                    const cx = w - radius - 40;
+                    const cy = radius + 40;
+
+                    ctx.save();
+                    const gradient = ctx.createRadialGradient(
+                        cx - radius * 0.3,
+                        cy - radius * 0.4,
+                        radius * 0.3,
+                        cx,
+                        cy,
+                        radius
+                    );
+                    gradient.addColorStop(0, "#7ad0ff");
+                    gradient.addColorStop(0.6, "#2b8dff");
+                    gradient.addColorStop(1, "#0c3068");
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#58b04d";
+                    ctx.beginPath();
+                    ctx.moveTo(cx - radius * 0.6, cy - radius * 0.1);
+                    ctx.bezierCurveTo(
+                        cx - radius * 0.4,
+                        cy - radius * 0.7,
+                        cx + radius * 0.1,
+                        cy - radius * 0.55,
+                        cx + radius * 0.25,
+                        cy - radius * 0.2
+                    );
+                    ctx.bezierCurveTo(
+                        cx - radius * 0.05,
+                        cy + radius * 0.15,
+                        cx - radius * 0.5,
+                        cy + radius * 0.2,
+                        cx - radius * 0.6,
+                        cy - radius * 0.1
+                    );
+                    ctx.fill();
+
+                    ctx.beginPath();
+                    ctx.moveTo(cx + radius * 0.25, cy + radius * 0.25);
+                    ctx.bezierCurveTo(
+                        cx + radius * 0.6,
+                        cy + radius * 0.2,
+                        cx + radius * 0.5,
+                        cy - radius * 0.15,
+                        cx + radius * 0.3,
+                        cy - radius * 0.05
+                    );
+                    ctx.bezierCurveTo(
+                        cx + radius * 0.1,
+                        cy + radius * 0.2,
+                        cx + radius * 0.2,
+                        cy + radius * 0.45,
+                        cx + radius * 0.25,
+                        cy + radius * 0.25
+                    );
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                function drawGround(groundY) {
+                    ctx.save();
+                    const gradient = ctx.createLinearGradient(
+                        0,
+                        groundY - 60,
+                        0,
+                        canvas.height
+                    );
+                    gradient.addColorStop(0, "#4c4b55");
+                    gradient.addColorStop(1, "#2c2931");
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(
+                        0,
+                        groundY,
+                        canvas.width,
+                        canvas.height - groundY
+                    );
+
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+                    for (let i = 0; i < 3; i++) {
+                        const hillWidth = canvas.width * (0.3 + i * 0.25);
+                        const hillHeight = 25 + i * 10;
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            canvas.width * (0.2 + i * 0.3),
+                            groundY + 40 + i * 15,
+                            hillWidth,
+                            hillHeight,
+                            0,
+                            0,
+                            Math.PI
+                        );
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function spawnDust(moduleX, moduleWidth, groundY) {
+                    for (let i = 0; i < 6; i++) {
+                        state.dust.push({
+                            x:
+                                moduleX +
+                                moduleWidth / 2 +
+                                (Math.random() - 0.5) * moduleWidth * 1.5,
+                            y: groundY - 6 + Math.random() * 8,
+                            vx: (Math.random() - 0.5) * 2.4,
+                            vy: -Math.random() * 1.1,
+                            life: 1,
+                            decay: 0.01 + Math.random() * 0.02,
+                            size: 2 + Math.random() * 3,
+                        });
+                    }
+                    if (state.dust.length > 600) {
+                        state.dust.splice(0, state.dust.length - 600);
+                    }
+                }
+
+                function updateDust() {
+                    state.dust = state.dust.filter((particle) => {
+                        particle.x += particle.vx;
+                        particle.y += particle.vy;
+                        particle.vx *= 0.985;
+                        particle.vy += 0.02;
+                        particle.life -= particle.decay;
+                        return particle.life > 0;
+                    });
+                }
+
+                function drawDust() {
+                    ctx.save();
+                    state.dust.forEach((particle) => {
+                        ctx.globalAlpha = Math.max(0, particle.life) * 0.9;
+                        ctx.fillStyle = "#cbb593";
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            particle.x,
+                            particle.y,
+                            particle.size * 2,
+                            particle.size,
+                            0,
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                    });
+                    ctx.restore();
+                    ctx.globalAlpha = 1;
+                }
+
+                function drawModule(x, y, size, thrusterActive, groundY) {
+                    ctx.save();
+                    ctx.lineCap = "round";
+                    ctx.strokeStyle = "#d3c19b";
+                    ctx.lineWidth = 6;
+                    ctx.beginPath();
+                    ctx.moveTo(x + 18, y + size.height - 12);
+                    ctx.lineTo(x - 34, groundY);
+                    ctx.moveTo(x + size.width - 18, y + size.height - 12);
+                    ctx.lineTo(x + size.width + 36, groundY);
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#b99d6f";
+                    ctx.beginPath();
+                    ctx.arc(x - 34, groundY, 16, 0, Math.PI);
+                    ctx.arc(x + size.width + 36, groundY, 16, 0, Math.PI);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#e9e1cf";
+                    ctx.fillRect(x, y + 28, size.width, size.height - 28);
+
+                    ctx.beginPath();
+                    ctx.moveTo(x + 10, y + 28);
+                    ctx.lineTo(x + size.width / 2, y);
+                    ctx.lineTo(x + size.width - 10, y + 28);
+                    ctx.closePath();
+                    ctx.fillStyle = "#d8cbb4";
+                    ctx.fill();
+
+                    ctx.fillStyle = "#1b2d52";
+                    ctx.beginPath();
+                    ctx.arc(
+                        x + size.width / 2,
+                        y + size.height * 0.5,
+                        20,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+
+                    ctx.strokeStyle = "#bbb199";
+                    ctx.lineWidth = 4;
+                    const ladderX = x + size.width * 0.58;
+                    ctx.beginPath();
+                    ctx.moveTo(ladderX, y + 42);
+                    ctx.lineTo(ladderX, groundY - 6);
+                    ctx.stroke();
+                    for (let i = 0; i < 6; i++) {
+                        const rungY = y + 60 + i * 15;
+                        ctx.beginPath();
+                        ctx.moveTo(ladderX - 18, rungY);
+                        ctx.lineTo(ladderX + 10, rungY);
+                        ctx.stroke();
+                    }
+
+                    if (thrusterActive) {
+                        const flameX = x + size.width / 2;
+                        const flameY = y + size.height;
+                        const flameGradient = ctx.createLinearGradient(
+                            flameX,
+                            flameY,
+                            flameX,
+                            flameY + 100
+                        );
+                        flameGradient.addColorStop(
+                            0,
+                            "rgba(255, 235, 180, 0.95)"
+                        );
+                        flameGradient.addColorStop(
+                            0.5,
+                            "rgba(255, 150, 60, 0.7)"
+                        );
+                        flameGradient.addColorStop(1, "rgba(70, 30, 10, 0.1)");
+                        ctx.fillStyle = flameGradient;
+                        ctx.beginPath();
+                        ctx.moveTo(flameX - 16, flameY);
+                        ctx.lineTo(flameX, flameY + 110);
+                        ctx.lineTo(flameX + 16, flameY);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+
+                    ctx.restore();
+                }
+
+                function getAstronautPosition(
+                    progress,
+                    moduleX,
+                    moduleY,
+                    size,
+                    groundY,
+                    flagX
+                ) {
+                    const ladderEnd = 0.33;
+                    const hopEnd = 0.7;
+                    const door = {
+                        x: moduleX + size.width * 0.56,
+                        y: moduleY + 24,
+                    };
+                    const ladderFoot = {
+                        x: moduleX + size.width * 0.6,
+                        y: groundY - 6,
+                    };
+
+                    if (progress <= ladderEnd) {
+                        const t = progress / ladderEnd;
+                        return {
+                            x: door.x + (ladderFoot.x - door.x) * t,
+                            y: door.y + (ladderFoot.y - door.y) * t,
+                            onGround: t > 0.95,
+                        };
+                    }
+
+                    if (progress <= hopEnd) {
+                        const t = (progress - ladderEnd) / (hopEnd - ladderEnd);
+                        const hopTarget = flagX - 60;
+                        const x = ladderFoot.x + (hopTarget - ladderFoot.x) * t;
+                        const hop =
+                            Math.sin(Math.PI * clamp(t * 1.1, 0, 1)) * 24;
+                        const y = groundY - 6 - hop;
+                        return {
+                            x,
+                            y,
+                            onGround: hop < 3,
+                        };
+                    }
+
+                    const t = clamp((progress - hopEnd) / (1 - hopEnd), 0, 1);
+                    const targetX = flagX - 16;
+                    const x = flagX - 50 + (targetX - (flagX - 50)) * t;
+                    const y = groundY - 6;
+                    return {
+                        x,
+                        y,
+                        onGround: true,
+                        planting: true,
+                        plantProgress: t,
+                    };
+                }
+
+                function updateFootprints(pos, progress, groundY) {
+                    if (!pos || !pos.onGround || progress < 0.42) return;
+                    if (state.lastFootprintX === null) {
+                        state.lastFootprintX = pos.x - 18;
+                        state.footprints.push({
+                            x: state.lastFootprintX,
+                            y: groundY - 6,
+                            tilt: -0.15,
+                        });
+                        return;
+                    }
+                    if (pos.x - state.lastFootprintX > 20) {
+                        state.lastFootprintX = pos.x;
+                        state.footprints.push({
+                            x: pos.x,
+                            y: groundY - 6,
+                            tilt: Math.random() * 0.3 - 0.15,
+                        });
+                        if (state.footprints.length > 18)
+                            state.footprints.shift();
+                    }
+                }
+
+                function drawFootprints() {
+                    ctx.save();
+                    ctx.fillStyle = "rgba(70, 65, 60, 0.85)";
+                    state.footprints.forEach((fp) => {
+                        ctx.save();
+                        ctx.translate(fp.x, fp.y);
+                        ctx.rotate(fp.tilt);
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, 10, 4, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    });
+                    ctx.restore();
+                }
+
+                function drawAstronaut(pos, timestamp) {
+                    ctx.save();
+                    ctx.translate(pos.x, pos.y);
+                    const bob = pos.onGround
+                        ? Math.sin(timestamp / 350) * 0.5
+                        : 0;
+                    ctx.translate(0, -46 + bob);
+
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+                    ctx.beginPath();
+                    ctx.ellipse(0, 48, 16, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#cfd0d8";
+                    ctx.fillRect(-18, -8, 36, 46);
+
+                    ctx.fillStyle = "#f4f2ec";
+                    ctx.fillRect(-14, -12, 28, 52);
+                    ctx.fillStyle = "#c74343";
+                    ctx.fillRect(-14, 6, 28, 6);
+                    ctx.fillStyle = "#3c76b0";
+                    ctx.fillRect(-14, 14, 28, 6);
+
+                    ctx.fillStyle = "#f4f2ec";
+                    ctx.beginPath();
+                    ctx.arc(0, -24, 18, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#1d2b44";
+                    ctx.beginPath();
+                    ctx.arc(0, -24, 12, Math.PI * 0.15, Math.PI * 0.85);
+                    ctx.fill();
+
+                    ctx.strokeStyle = "#f4f2ec";
+                    ctx.lineWidth = 5;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    ctx.moveTo(-10, 18);
+                    ctx.lineTo(-28, 40);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(10, 18);
+                    const reach = pos.planting
+                        ? 30 + pos.plantProgress * 18
+                        : 16 + Math.sin(timestamp / 400) * 4;
+                    ctx.lineTo(
+                        10 + reach,
+                        10 - (pos.planting ? pos.plantProgress * 20 : 0)
+                    );
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(-6, 40);
+                    ctx.lineTo(-14, 52);
+                    ctx.moveTo(6, 40);
+                    ctx.lineTo(18, 52);
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#4a4d59";
+                    ctx.fillRect(-18, 52, 14, 6);
+                    ctx.fillRect(4, 52, 14, 6);
+
+                    ctx.restore();
+                }
+
+                function drawFlag(flagX, groundY, timestamp) {
+                    ctx.save();
+                    const poleHeight = 110;
+                    const topY = groundY - poleHeight;
+
+                    ctx.strokeStyle = "#e3dcc9";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(flagX, groundY);
+                    ctx.lineTo(flagX, topY);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(flagX - 8, groundY);
+                    ctx.lineTo(flagX + 8, groundY);
+                    ctx.stroke();
+
+                    const clothWidth = 92;
+                    const clothHeight = 50;
+                    const subtleWave = Math.sin(timestamp / 600) * 2;
+                    let extraWave = 0;
+                    if (state.flagWaveStart) {
+                        const delta = (timestamp - state.flagWaveStart) / 1000;
+                        extraWave = 14 * Math.exp(-delta * 1.3);
+                        if (extraWave < 0.2) {
+                            state.flagWaveStart = null;
+                        }
+                    }
+                    const amplitude = 3 + subtleWave + extraWave;
+                    const segments = 14;
+                    const topEdge = [];
+                    for (let i = 0; i <= segments; i++) {
+                        const px = flagX + 6 + (clothWidth / segments) * i;
+                        const offset =
+                            Math.sin(timestamp / 450 + i * 0.45) * amplitude;
+                        topEdge.push({ x: px, y: topY + offset });
+                    }
+
+                    ctx.save();
+                    ctx.beginPath();
+                    traceFlagPath(topEdge, clothHeight);
+                    ctx.clip();
+
+                    ctx.fillStyle = "#b22234";
+                    ctx.fillRect(
+                        flagX + 6,
+                        topY - amplitude - 20,
+                        clothWidth,
+                        clothHeight + 40 + amplitude * 2
+                    );
+
+                    const stripeHeight = clothHeight / 7;
+                    ctx.fillStyle = "#ffffff";
+                    for (let i = 1; i < 7; i += 2) {
+                        ctx.fillRect(
+                            flagX + 6,
+                            topY + stripeHeight * i,
+                            clothWidth,
+                            stripeHeight
+                        );
+                    }
+
+                    ctx.fillStyle = "#3c3b6e";
+                    const cantonHeight = stripeHeight * 4;
+                    const cantonWidth = clothWidth * 0.45;
+                    ctx.fillRect(flagX + 6, topY, cantonWidth, cantonHeight);
+
+                    ctx.fillStyle = "#ffffff";
+                    const starRows = 4;
+                    const starCols = 6;
+                    const starGapX = cantonWidth / starCols;
+                    const starGapY = cantonHeight / starRows;
+                    for (let row = 0; row < starRows; row++) {
+                        for (let col = 0; col < starCols; col++) {
+                            ctx.beginPath();
+                            ctx.arc(
+                                flagX + 10 + col * starGapX,
+                                topY + 6 + row * starGapY,
+                                1.3,
+                                0,
+                                Math.PI * 2
+                            );
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
+
+                    ctx.beginPath();
+                    traceFlagPath(topEdge, clothHeight);
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#f3ead4";
+                    ctx.beginPath();
+                    ctx.arc(flagX, topY, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                function traceFlagPath(topEdge, clothHeight) {
+                    ctx.moveTo(topEdge[0].x, topEdge[0].y);
+                    for (let i = 1; i < topEdge.length; i++) {
+                        ctx.lineTo(topEdge[i].x, topEdge[i].y);
+                    }
+                    for (let i = topEdge.length - 1; i >= 0; i--) {
+                        ctx.lineTo(topEdge[i].x, topEdge[i].y + clothHeight);
+                    }
+                    ctx.closePath();
+                }
+
+                function drawOverlayText() {
+                    ctx.save();
+                    ctx.font = '13px "Space Grotesk", "Segoe UI", sans-serif';
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+                    ctx.fillText(
+                        "Click anywhere to replay • Plant Flag replays the flag wave",
+                        20,
+                        canvas.height - 28
+                    );
+                    ctx.restore();
+                }
+            })();
+        </script>
+    </body>
+</html>
