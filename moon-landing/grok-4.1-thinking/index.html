@@ -2,407 +2,532 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <title>Moon Landing Animation</title>
+        <title>Vintage Theater Popcorn Machine</title>
         <style>
             body {
                 margin: 0;
-                overflow: hidden;
-                background: black;
+                padding: 0;
+                background: #f5f0e6;
+                font-family: Arial, sans-serif;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                min-height: 100vh;
+            }
+            h1 {
+                color: #ff6b35;
+                text-shadow: 3px 3px 0 #000;
+                margin: 20px 0 10px;
+                font-size: 36px;
             }
             canvas {
-                display: block;
+                border: 8px solid #ff6b35;
+                border-radius: 15px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                background: #f5f0e6;
             }
-            #plantButton {
-                position: absolute;
-                top: 20px;
-                left: 20px;
-                z-index: 10;
-                padding: 10px 20px;
-                font-size: 16px;
+            .controls {
+                margin: 20px;
+                text-align: center;
+            }
+            label {
+                font-size: 20px;
+                color: #333;
+                margin-right: 15px;
+            }
+            input[type="range"] {
+                width: 350px;
+                height: 10px;
+                border-radius: 5px;
+                background: #ddd;
+                outline: none;
+            }
+            button {
+                background: #ff6b35;
+                color: white;
+                border: none;
+                padding: 12px 25px;
+                margin: 10px;
+                border-radius: 8px;
                 cursor: pointer;
+                font-weight: bold;
+                font-size: 18px;
+                box-shadow: 3px 3px 0 #000;
+            }
+            button:hover {
+                background: #e55a2b;
+            }
+            button:active {
+                transform: translateY(2px);
+                box-shadow: 1px 1px 0 #000;
             }
         </style>
     </head>
     <body>
-        <canvas id="canvas"></canvas>
-        <button id="plantButton">Plant Flag</button>
+        <h1>Vintage Theater Popcorn Machine</h1>
+        <canvas id="canvas" width="600" height="850"></canvas>
+        <div class="controls">
+            <label>Heat Level: <span id="heatValue">50</span></label
+            ><br />
+            <input type="range" id="heatSlider" min="0" max="100" value="50" />
+            <br />
+            <button id="openDoor">Open Door</button>
+            <button id="reset">Reset</button>
+        </div>
 
         <script>
             const canvas = document.getElementById("canvas");
             const ctx = canvas.getContext("2d");
-            const button = document.getElementById("plantButton");
+            const width = canvas.width;
+            const height = canvas.height;
 
-            let width, height, groundY;
-            let stars = [],
-                craters = [],
-                particles = [],
-                footprints = [];
-            let module = { x: 0, y: -200 };
-            let astronaut = { x: 0, y: 0, visible: false };
-            let flag = { x: 0, planted: false, animStart: 0 };
-            let animationStart = 0;
-            let lastStepTime = 0;
+            const cabinetLeft = 120;
+            const cabinetRight = 480;
+            const cabinetTop = 170;
+            const cabinetBottom = 620;
+            const spillFloor = 780;
 
-            function resize() {
-                width = canvas.width = window.innerWidth;
-                height = canvas.height = window.innerHeight;
-                groundY = height * 0.85;
+            let heat = 50;
+            let doorOpen = false;
 
-                module.x = width / 2;
-                flag.x = width / 2 + 300;
+            let solids = []; // kernels + popcorn (full physics + collisions)
+            let particles = []; // steam, bursts, butter (no collisions)
 
-                stars = [];
-                for (let i = 0; i < 300; i++) {
-                    stars.push({
-                        x: Math.random() * width,
-                        y: Math.random() * height * 0.7,
-                        r: Math.random() * 1.5 + 0.5,
-                    });
+            class Particle {
+                constructor(
+                    x,
+                    y,
+                    vx = 0,
+                    vy = 0,
+                    color = "#fff",
+                    radius = 10,
+                    type = "popcorn",
+                    life = Infinity,
+                    alpha = 1
+                ) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.radius = radius;
+                    this.type = type;
+                    this.life = life;
+                    this.alpha = alpha;
+                    this.popTimer = 0;
                 }
 
-                craters = [];
-                for (let i = 0; i < 12; i++) {
-                    craters.push({
-                        x: Math.random() * width,
-                        y: groundY + (Math.random() * (height - groundY)) / 2,
-                        r: Math.random() * 40 + 20,
-                    });
+                update() {
+                    // Effect particles (no gravity/collisions)
+                    if (
+                        this.type === "steam" ||
+                        this.type === "burst" ||
+                        this.type === "butter"
+                    ) {
+                        this.life--;
+                        if (this.type === "steam") {
+                            this.vy -= 0.08; // rise gently
+                            this.vx += (Math.random() - 0.5) * 0.2;
+                            this.alpha -= 0.008;
+                        } else if (this.type === "butter") {
+                            this.vy += 0.15; // slow fall
+                        } else if (this.type === "burst") {
+                            this.vx *= 0.94;
+                            this.vy *= 0.94;
+                            this.alpha -= 0.03;
+                        }
+                        this.x += this.vx;
+                        this.y += this.vy;
+                        return;
+                    }
+
+                    // Solids (kernels & popcorn)
+                    this.vy += 0.3; // gravity
+                    this.vx *= 0.98; // light air resistance
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    // Wall bounces
+                    if (this.x - this.radius < cabinetLeft) {
+                        this.x = cabinetLeft + this.radius;
+                        this.vx = -this.vx * 0.8;
+                    }
+                    if (this.x + this.radius > cabinetRight) {
+                        this.x = cabinetRight - this.radius;
+                        this.vx = -this.vx * 0.8;
+                    }
+                    if (this.y - this.radius < cabinetTop) {
+                        this.y = cabinetTop + this.radius;
+                        this.vy = -this.vy * 0.8;
+                    }
+
+                    // Bottom bounce logic
+                    if (this.y + this.radius > cabinetBottom) {
+                        if (doorOpen && this.type === "popcorn") {
+                            // Popcorn falls through when door is open
+                            if (this.y + this.radius > spillFloor) {
+                                this.y = spillFloor - this.radius;
+                                this.vy = -this.vy * 0.6;
+                                this.vx *= 0.7;
+                            }
+                        } else {
+                            // Normal bounce (kernels always stay, popcorn stays if door closed)
+                            this.y = cabinetBottom - this.radius;
+                            this.vy = -this.vy * 0.7;
+                            this.vx *= 0.8;
+                            if (Math.abs(this.vy) < 1.5) this.vy = 0;
+                        }
+                    }
+
+                    // Kernel-specific shaking & popping when resting on bottom
+                    if (
+                        this.type === "kernel" &&
+                        Math.abs(this.vy) < 3 &&
+                        this.y + this.radius >= cabinetBottom - 5
+                    ) {
+                        this.vx += (Math.random() - 0.5) * (heat / 12);
+                        this.vy += (Math.random() - 0.8) * (heat / 25);
+                        this.popTimer += heat / 40;
+                        if (this.popTimer > 80) {
+                            popKernel(this);
+                        }
+                    }
+                }
+
+                draw() {
+                    ctx.globalAlpha = this.alpha;
+                    ctx.fillStyle = this.color;
+                    ctx.strokeStyle = "#000";
+                    ctx.lineWidth = 3;
+
+                    if (this.type === "popcorn") {
+                        // Fluffy popcorn (main body + irregular lobes)
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+
+                        ctx.fillStyle = "#fff";
+                        for (let i = 0; i < 9; i++) {
+                            const angle =
+                                (i * Math.PI * 2) / 9 + Math.random() * 0.3;
+                            const dist =
+                                this.radius * (0.6 + Math.random() * 0.3);
+                            const px = this.x + Math.cos(angle) * dist;
+                            const py = this.y + Math.sin(angle) * dist;
+                            const pr =
+                                this.radius * (0.4 + Math.random() * 0.3);
+                            ctx.beginPath();
+                            ctx.arc(px, py, pr, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                        }
+                    } else {
+                        // Simple circle for kernels, effects
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
                 }
             }
 
-            function startAnimation() {
-                animationStart = performance.now();
-                particles = [];
-                footprints = [];
-                astronaut.visible = false;
-                astronaut.x = module.x;
-                flag.planted = false;
-                module.y = -200;
-                lastStepTime = 0;
-            }
-
-            function addThrusterParticles(count = 15) {
-                for (let i = 0; i < count; i++) {
-                    const angle = Math.PI + (Math.random() - 0.5) * 0.6;
-                    const speed = 6 + Math.random() * 8;
-                    particles.push({
-                        x: module.x + (Math.random() - 0.5) * 50,
-                        y: module.y + 70,
-                        vx: Math.cos(angle) * speed,
-                        vy: Math.sin(angle) * speed,
-                        life: 1,
-                        color: ["orange", "yellow", "white"][
-                            Math.floor(Math.random() * 3)
-                        ],
-                    });
-                }
-            }
-
-            function addDustParticles(count = 30) {
-                for (let i = 0; i < count; i++) {
+            function popKernel(kernel) {
+                // Burst effect
+                const burstCount = 12 + Math.floor(heat / 6);
+                for (let i = 0; i < burstCount; i++) {
                     const angle = Math.random() * Math.PI * 2;
-                    const speed = Math.random() * 5 + 2;
-                    particles.push({
-                        x: module.x + (Math.random() - 0.5) * 80,
-                        y: groundY,
-                        vx: Math.cos(angle) * speed,
-                        vy: Math.sin(angle) * speed - 2,
-                        life: 1,
-                        size: Math.random() * 5 + 3,
-                        color: "gray",
-                    });
+                    const speed = 6 + Math.random() * 18 + heat / 8;
+                    particles.push(
+                        new Particle(
+                            kernel.x,
+                            kernel.y,
+                            Math.cos(angle) * speed,
+                            Math.sin(angle) * speed,
+                            "#ffff99",
+                            4 + Math.random() * 5,
+                            "burst",
+                            40,
+                            1
+                        )
+                    );
                 }
-            }
 
-            function updateParticles() {
-                particles = particles.filter((p) => {
-                    p.x += p.vx;
-                    p.y += p.vy;
-                    p.vy += 0.08; // gravity
-                    p.life -= 0.015;
-                    return p.life > 0;
-                });
-            }
+                // Create popcorn
+                const popVy = -(12 + Math.random() * 20 + heat / 4);
+                const popVx = kernel.vx + (Math.random() - 0.5) * 12;
+                solids.push(
+                    new Particle(
+                        kernel.x,
+                        kernel.y,
+                        popVx,
+                        popVy,
+                        "#fff",
+                        16 + Math.random() * 8,
+                        "popcorn"
+                    )
+                );
 
-            function drawParticles() {
-                for (let p of particles) {
-                    ctx.globalAlpha = p.life;
-                    ctx.fillStyle = p.color;
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, p.size || 4, 0, Math.PI * 2);
-                    ctx.fill();
+                // Occasional butter drizzle
+                if (Math.random() < 0.4 + heat / 200) {
+                    for (let i = 0; i < 6; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        particles.push(
+                            new Particle(
+                                kernel.x,
+                                kernel.y - 10,
+                                Math.cos(angle) * 2,
+                                2 + Math.random() * 3,
+                                "#ffd700",
+                                3,
+                                "butter",
+                                300,
+                                1
+                            )
+                        );
+                    }
                 }
-                ctx.globalAlpha = 1;
+
+                // Remove kernel
+                solids = solids.filter((s) => s !== kernel);
             }
 
-            function drawLunarModule() {
-                const mx = module.x;
-                const my = module.y;
-
-                // body
-                ctx.fillStyle = "#ffd700";
-                ctx.fillRect(mx - 40, my - 60, 80, 100);
-
-                // dish
-                ctx.fillStyle = "#ffffff";
-                ctx.beginPath();
-                ctx.arc(mx, my - 70, 20, 0, Math.PI * 2);
-                ctx.fill();
-
-                // legs
-                ctx.fillStyle = "#aaaaaa";
-                ctx.fillRect(mx - 60, my + 40, 20, 60);
-                ctx.fillRect(mx + 40, my + 40, 20, 60);
-                ctx.fillRect(mx - 70, my + 100, 40, 10);
-                ctx.fillRect(mx + 30, my + 100, 40, 10);
+            function addSteam() {
+                const x = 200 + Math.random() * 200;
+                particles.push(
+                    new Particle(
+                        x,
+                        cabinetBottom - 30,
+                        (Math.random() - 0.5) * 2,
+                        -3,
+                        "rgba(255,255,255,0.6)",
+                        10 + Math.random() * 12,
+                        "steam",
+                        Infinity,
+                        0.7
+                    )
+                );
             }
 
-            function drawAstronaut(time) {
-                const ax = astronaut.x;
-                let ay = astronaut.y;
-                const walkTime = time - animationStart - 15000; // walking starts ~15s in
+            function drawMachine() {
+                ctx.clearRect(0, 0, width, height);
 
-                const legSwing = Math.sin(walkTime / 100) * 25;
-                const bob = Math.abs(Math.sin(walkTime / 100)) * 8;
-                ay -= bob;
+                // Counter / base
+                ctx.fillStyle = "#a0522d";
+                ctx.fillRect(50, 730, 500, 70);
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 8;
+                ctx.strokeRect(50, 730, 500, 70);
 
-                // head
-                ctx.fillStyle = "white";
-                ctx.beginPath();
-                ctx.arc(ax, ay - 40, 15, 0, Math.PI * 2);
-                ctx.fill();
-
-                // visor
-                ctx.fillStyle = "#daa520";
-                ctx.beginPath();
-                ctx.arc(ax, ay - 40, 10, 0, Math.PI * 2);
-                ctx.fill();
-
-                // body
-                ctx.fillStyle = "white";
-                ctx.fillRect(ax - 20, ay - 30, 40, 60);
-
-                // arms
-                ctx.strokeStyle = "white";
+                // Kettle (orange-red)
+                ctx.fillStyle = "#ff4500";
+                ctx.fillRect(140, 640, 320, 110);
+                ctx.strokeStyle = "#000";
                 ctx.lineWidth = 10;
-                ctx.beginPath();
-                ctx.moveTo(ax - 20, ay - 10);
-                ctx.lineTo(ax - 35, ay + 15);
-                ctx.moveTo(ax + 20, ay - 10);
-                ctx.lineTo(ax + 35, ay + 15);
-                ctx.stroke();
+                ctx.strokeRect(140, 640, 320, 110);
 
-                // legs
-                ctx.beginPath();
-                ctx.moveTo(ax - 10, ay + 30);
-                ctx.lineTo(ax - 10 + legSwing, ay + 70);
-                ctx.moveTo(ax + 10, ay + 30);
-                ctx.lineTo(ax + 10 - legSwing, ay + 70);
-                ctx.stroke();
-            }
+                // Cabinet frame
+                ctx.strokeStyle = "#000";
+                ctx.lineWidth = 12;
+                ctx.strokeRect(
+                    cabinetLeft - 10,
+                    cabinetTop - 20,
+                    cabinetRight - cabinetLeft + 20,
+                    cabinetBottom - cabinetTop + 60
+                );
 
-            function drawFlag(time) {
-                const t = (time - flag.animStart) / 1000;
-                const appear = Math.min(t / 1.5, 1);
-                const fx = flag.x;
-                const fy = groundY;
-
-                // pole
-                ctx.strokeStyle = "#cccccc";
+                // Glass panel lines
                 ctx.lineWidth = 6;
                 ctx.beginPath();
-                ctx.moveTo(fx, fy);
-                ctx.lineTo(fx, fy - 170 * appear);
+                ctx.moveTo(cabinetLeft, cabinetTop);
+                ctx.lineTo(cabinetLeft, cabinetBottom);
+                ctx.moveTo(cabinetRight, cabinetTop);
+                ctx.lineTo(cabinetRight, cabinetBottom);
+                ctx.moveTo(cabinetLeft, cabinetTop);
+                ctx.lineTo(cabinetRight, cabinetTop);
                 ctx.stroke();
 
-                const flagW = 140 * appear;
-                const flagH = 75 * appear;
-                const amplitude = 20;
-                const phase = t * 1.8;
-
-                ctx.save();
-                ctx.translate(fx, fy - 170 * appear);
-
+                // Vertical divider
                 ctx.beginPath();
-                ctx.moveTo(0, 0);
-                const segments = 15;
-                for (let i = 1; i <= segments; i++) {
-                    const prog = i / segments;
-                    const x = prog * flagW;
-                    const y = Math.sin(prog * 4 + phase) * amplitude * prog;
-                    ctx.quadraticCurveTo(x - flagW / (segments * 2), y, x, y);
-                }
-                ctx.lineTo(flagW, flagH);
-                ctx.lineTo(0, flagH);
-                ctx.closePath();
-                ctx.clip();
+                ctx.moveTo(300, cabinetTop);
+                ctx.lineTo(300, cabinetBottom);
+                ctx.stroke();
 
-                // stripes
-                const stripeH = flagH / 13;
-                ctx.fillStyle = "#b22234";
-                for (let i = 0; i < 13; i += 2) {
-                    ctx.fillRect(0, i * stripeH, flagW, stripeH);
-                }
-                ctx.fillStyle = "#ffffff";
-                for (let i = 1; i < 13; i += 2) {
-                    ctx.fillRect(0, i * stripeH, flagW, stripeH);
-                }
+                // Top sign
+                ctx.fillStyle = "#ff6b35";
+                ctx.fillRect(100, 110, 400, 70);
+                ctx.strokeRect(100, 110, 400, 70);
+                ctx.fillStyle = "#f5f0e6";
+                ctx.font = "bold 52px serif";
+                ctx.textAlign = "center";
+                ctx.lineWidth = 5;
+                ctx.strokeText("POPCORN", 300, 165);
+                ctx.fillStyle = "#ff6b35";
+                ctx.fillText("POPCORN", 300, 165);
 
-                // blue canton
-                ctx.fillStyle = "#3c3b6e";
-                ctx.fillRect(0, 0, flagW * 0.4, stripeH * 7);
-
-                // stars (simple circles)
-                ctx.fillStyle = "#ffffff";
-                const starR = stripeH * 0.35;
-                const starSpacingX = (flagW * 0.4) / 11;
-                const starSpacingY = (stripeH * 7) / 9;
-                for (let row = 0; row < 9; row++) {
-                    const cols = row % 2 === 0 ? 6 : 5;
-                    const offset = row % 2 === 0 ? starSpacingX / 2 : 0;
-                    for (let col = 0; col < cols; col++) {
-                        const sx = starSpacingX * (col + 1) + offset;
-                        const sy = starSpacingY * (row + 0.8);
-                        ctx.beginPath();
-                        ctx.arc(sx, sy, starR, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
+                // Door bottom line (only when closed)
+                if (!doorOpen) {
+                    ctx.lineWidth = 10;
+                    ctx.beginPath();
+                    ctx.moveTo(cabinetLeft, cabinetBottom);
+                    ctx.lineTo(cabinetRight, cabinetBottom);
+                    ctx.stroke();
                 }
 
-                ctx.restore();
+                // Subtle glass reflection
+                ctx.strokeStyle = "rgba(255,255,255,0.25)";
+                ctx.lineWidth = 25;
+                ctx.beginPath();
+                ctx.moveTo(cabinetLeft + 40, cabinetTop + 40);
+                ctx.lineTo(cabinetRight - 40, cabinetBottom - 40);
+                ctx.stroke();
             }
 
-            function animate(time) {
-                ctx.fillStyle = "black";
-                ctx.fillRect(0, 0, width, height);
-
-                // stars
-                ctx.fillStyle = "white";
-                for (let s of stars) {
-                    ctx.beginPath();
-                    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-
-                // Earth
-                const earthR = height * 0.1;
-                ctx.fillStyle = "#4169e1";
-                ctx.beginPath();
-                ctx.arc(width * 0.15, height * 0.15, earthR, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = "#228b22";
-                ctx.beginPath();
-                ctx.arc(
-                    width * 0.15 + earthR * 0.3,
-                    height * 0.15,
-                    earthR * 0.35,
+            function drawGlow() {
+                if (heat === 0) return;
+                const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 200);
+                const intensity = (heat / 100) * pulse * 0.6;
+                const grad = ctx.createRadialGradient(
+                    300,
+                    cabinetBottom,
                     0,
-                    Math.PI * 2
+                    300,
+                    cabinetBottom,
+                    250
                 );
-                ctx.fill();
+                grad.addColorStop(0, `rgba(255,180,0,${intensity})`);
+                grad.addColorStop(0.6, `rgba(255,100,0,${intensity * 0.4})`);
+                grad.addColorStop(1, "rgba(255,50,0,0)");
+                ctx.fillStyle = grad;
+                ctx.fillRect(
+                    cabinetLeft - 60,
+                    cabinetBottom - 300,
+                    cabinetRight - cabinetLeft + 120,
+                    400
+                );
+            }
 
-                // ground
-                ctx.fillStyle = "#b0b0b0";
-                ctx.fillRect(0, groundY, width, height - groundY);
+            function animate() {
+                drawMachine();
+                drawGlow();
 
-                // craters
-                ctx.fillStyle = "#808080";
-                for (let c of craters) {
-                    ctx.beginPath();
-                    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-                    ctx.fill();
-                }
+                // Add steam based on heat
+                if (heat > 10 && Math.random() < heat / 300) addSteam();
 
-                // footprints
-                ctx.fillStyle = "#606060";
-                for (let f of footprints) {
-                    ctx.beginPath();
-                    ctx.ellipse(
-                        f,
-                        groundY + 20,
-                        12,
-                        28,
-                        Math.PI / 8,
-                        0,
-                        Math.PI * 2
-                    );
-                    ctx.fill();
-                }
+                // Update & draw effect particles
+                particles = particles.filter((p) => {
+                    p.update();
+                    if (p.life <= 0 || p.alpha <= 0 || p.y > height + 100)
+                        return false;
+                    p.draw();
+                    return true;
+                });
 
-                const elapsed = time - animationStart;
+                // Update solids
+                solids.forEach((s) => s.update());
 
-                // Module descent (10s)
-                if (elapsed < 10000) {
-                    const prog = elapsed / 10000;
-                    module.y = -200 + prog * height;
-                    if (prog > 0.6) addThrusterParticles();
-                    if (prog > 0.85) addDustParticles(40);
-                } else {
-                    module.y = groundY - 80;
-                }
+                // Particle-particle collisions (only solids)
+                for (let i = 0; i < solids.length; i++) {
+                    for (let j = i + 1; j < solids.length; j++) {
+                        const p1 = solids[i];
+                        const p2 = solids[j];
+                        const dx = p2.x - p1.x;
+                        const dy = p2.y - p1.y;
+                        const dist = Math.hypot(dx, dy);
+                        const minDist = p1.radius + p2.radius;
+                        if (dist < minDist && dist > 0) {
+                            const nx = dx / dist;
+                            const ny = dy / dist;
 
-                // Extra dust after landing
-                if (elapsed > 10000 && elapsed < 13000) addDustParticles(20);
+                            // Separate
+                            const overlap = minDist - dist;
+                            const m1 = p1.radius ** 2;
+                            const m2 = p2.radius ** 2;
+                            const totalM = m1 + m2;
+                            p1.x -= (nx * overlap * m2) / totalM;
+                            p1.y -= (ny * overlap * m2) / totalM;
+                            p2.x += (nx * overlap * m1) / totalM;
+                            p2.y += (ny * overlap * m1) / totalM;
 
-                // Astronaut sequence
-                if (elapsed > 13000) {
-                    astronaut.visible = true;
-                    const astroTime = elapsed - 13000;
+                            // Velocity response
+                            const rvx = p2.vx - p1.vx;
+                            const rvy = p2.vy - p1.vy;
+                            const dot = rvx * nx + rvy * ny;
+                            if (dot > 0) continue; // separating
 
-                    if (astroTime < 4000) {
-                        // descend ladder
-                        astronaut.y = module.y + 80 + (astroTime / 4000) * 120;
-                        astronaut.x = module.x;
-                    } else if (astroTime < 7000) {
-                        // bounce/hop
-                        const hop = astroTime - 4000;
-                        const bounce =
-                            -Math.abs(Math.sin((hop / 500) * Math.PI)) * 60;
-                        astronaut.y = groundY + bounce;
-                        astronaut.x = module.x + (hop / 3000) * 80;
-                    } else {
-                        // walk
-                        astronaut.x = module.x + 80 + (astroTime - 7000) * 0.08;
-                        astronaut.y = groundY;
-                        if (astronaut.x > flag.x - 60) {
-                            astronaut.x = flag.x - 60;
-                            if (!flag.planted) {
-                                flag.planted = true;
-                                flag.animStart = time;
-                            }
-                        }
-
-                        // footprints
-                        if (time - lastStepTime > 700) {
-                            lastStepTime = time;
-                            footprints.push(astronaut.x - 15);
-                            footprints.push(astronaut.x + 15);
+                            const e = 0.7;
+                            const j = (-(1 + e) * dot) / (1 / m1 + 1 / m2);
+                            p1.vx += (j * nx) / m1;
+                            p1.vy += (j * ny) / m1;
+                            p2.vx -= (j * nx) / m2;
+                            p2.vy -= (j * ny) / m2;
                         }
                     }
                 }
 
-                updateParticles();
-                drawParticles();
-                drawLunarModule();
-                if (astronaut.visible) drawAstronaut(time);
-                if (flag.planted) drawFlag(time);
+                // Draw solids
+                solids.forEach((s) => s.draw());
+
+                // Cleanup off-screen solids
+                solids = solids.filter(
+                    (s) =>
+                        s.y < height + s.radius * 2 &&
+                        s.x > -100 &&
+                        s.x < width + 100
+                );
 
                 requestAnimationFrame(animate);
             }
 
-            resize();
-            window.addEventListener("resize", resize);
-            startAnimation();
-            requestAnimationFrame(animate);
+            // Controls
+            document
+                .getElementById("heatSlider")
+                .addEventListener("input", (e) => {
+                    heat = parseInt(e.target.value);
+                    document.getElementById("heatValue").textContent = heat;
+                });
 
-            button.addEventListener("click", (e) => {
-                e.stopPropagation();
-                if (flag.planted) {
-                    flag.animStart = performance.now();
+            canvas.addEventListener("click", () => {
+                // Drop 1-3 kernels from top
+                const count = 1 + Math.floor(Math.random() * 3);
+                for (let i = 0; i < count; i++) {
+                    const x = 200 + Math.random() * 200;
+                    solids.push(
+                        new Particle(
+                            x,
+                            cabinetTop + 20,
+                            (Math.random() - 0.5) * 4,
+                            3,
+                            "#ffae42",
+                            10,
+                            "kernel"
+                        )
+                    );
                 }
             });
 
-            canvas.addEventListener("click", startAnimation);
+            document
+                .getElementById("openDoor")
+                .addEventListener("click", () => {
+                    if (doorOpen) return;
+                    doorOpen = true;
+                    // Disturb popcorn to start spilling
+                    solids
+                        .filter((s) => s.type === "popcorn")
+                        .forEach((p) => {
+                            p.vy += 3 + Math.random() * 8;
+                            p.vx += (Math.random() - 0.5) * 12;
+                        });
+                });
+
+            document.getElementById("reset").addEventListener("click", () => {
+                solids = [];
+                particles = [];
+                doorOpen = false;
+            });
+
+            animate();
         </script>
     </body>
 </html>

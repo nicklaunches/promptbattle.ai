@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Vintage Popcorn Machine</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                background: #f5f0e6;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                font-family: Georgia, serif;
+                overflow: hidden;
+            }
+            canvas {
+                border: 3px solid #222;
+                border-radius: 8px;
+                cursor: pointer;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            }
+            .controls {
+                margin-top: 20px;
+                display: flex;
+                gap: 15px;
+                align-items: center;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+            .btn {
+                background: #ff6b35;
+                color: #fff;
+                border: 3px solid #222;
+                padding: 10px 20px;
+                font-family: Georgia, serif;
+                font-size: 16px;
+                cursor: pointer;
+                border-radius: 5px;
+                transition: all 0.2s;
+                font-weight: bold;
+                text-transform: uppercase;
+            }
+            .btn:hover {
+                background: #e55a2b;
+                transform: scale(1.05);
+            }
+            .btn:active {
+                transform: scale(0.95);
+            }
+            .slider-container {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                background: #fff;
+                padding: 8px 15px;
+                border: 3px solid #222;
+                border-radius: 5px;
+            }
+            .slider-container label {
+                font-weight: bold;
+                color: #222;
+            }
+            input[type="range"] {
+                width: 100px;
+                accent-color: #ff6b35;
+            }
+            h1 {
+                color: #222;
+                margin-bottom: 15px;
+                text-shadow: 2px 2px 0 #ff6b35;
+                font-size: 28px;
+                letter-spacing: 2px;
+            }
+            .instructions {
+                color: #555;
+                font-size: 14px;
+                margin-top: 10px;
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>🍿 POPCORN MACHINE 🍿</h1>
+        <canvas id="canvas" width="500" height="600"></canvas>
+        <div class="controls">
+            <div class="slider-container">
+                <label>🔥 HEAT:</label>
+                <input type="range" id="heat" min="1" max="10" value="5" />
+            </div>
+            <button class="btn" id="doorBtn">Open Door</button>
+            <button class="btn" id="resetBtn">Reset</button>
+        </div>
+        <p class="instructions">Click on the machine to add kernels!</p>
+        <script>
+            const canvas = document.getElementById("canvas"),
+                ctx = canvas.getContext("2d"),
+                W = canvas.width,
+                H = canvas.height;
+            const heatSlider = document.getElementById("heat"),
+                doorBtn = document.getElementById("doorBtn"),
+                resetBtn = document.getElementById("resetBtn");
+            let doorOpen = false,
+                kernels = [],
+                popcorns = [],
+                steam = [],
+                bursts = [],
+                butterDrips = [],
+                floorPopcorn = [],
+                lightPulse = 0,
+                time = 0;
+            const machine = {
+                x: 50,
+                y: 80,
+                w: 400,
+                h: 420,
+                glassX: 80,
+                glassY: 120,
+                glassW: 340,
+                glassH: 300,
+                floorY: 420,
+            };
+            const gravity = 0.3,
+                bounce = 0.6,
+                friction = 0.98;
+
+            class Kernel {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = (Math.random() - 0.5) * 2;
+                    this.vy = 0;
+                    this.size = 8;
+                    this.shake = 0;
+                    this.heat = 0;
+                    this.popped = false;
+                }
+                update() {
+                    const h = parseInt(heatSlider.value);
+                    this.heat += h * 0.01;
+                    this.shake = Math.sin(time * 0.5 + this.x) * this.heat * 2;
+                    this.vy += gravity * 0.5;
+                    this.x += this.vx + this.shake;
+                    this.y += this.vy;
+                    if (this.x < machine.glassX + 15) {
+                        this.x = machine.glassX + 15;
+                        this.vx *= -bounce;
+                    }
+                    if (this.x > machine.glassX + machine.glassW - 15) {
+                        this.x = machine.glassX + machine.glassW - 15;
+                        this.vx *= -bounce;
+                    }
+                    if (this.y > machine.floorY - 10) {
+                        this.y = machine.floorY - 10;
+                        this.vy *= -bounce * 0.5;
+                        this.vx *= friction;
+                    }
+                    if (this.heat > 1 + Math.random() * 2) {
+                        this.pop();
+                        return false;
+                    }
+                    return true;
+                }
+                pop() {
+                    bursts.push({
+                        x: this.x,
+                        y: this.y,
+                        particles: [],
+                        age: 0,
+                    });
+                    for (let i = 0; i < 8; i++)
+                        bursts[bursts.length - 1].particles.push({
+                            x: 0,
+                            y: 0,
+                            vx: (Math.random() - 0.5) * 10,
+                            vy: (Math.random() - 0.5) * 10 - 5,
+                            size: 3,
+                        });
+                    for (let i = 0; i < 3; i++)
+                        popcorns.push(new Popcorn(this.x, this.y));
+                }
+                draw() {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.fillStyle = "#f4d03f";
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        0,
+                        0,
+                        this.size,
+                        this.size * 1.3,
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = "#c9a227";
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        0,
+                        this.size * 0.3,
+                        this.size * 0.3,
+                        this.size * 0.5,
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            class Popcorn {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = (Math.random() - 0.5) * 8;
+                    this.vy = -8 - Math.random() * 8;
+                    this.size = 12 + Math.random() * 8;
+                    this.rot = Math.random() * Math.PI * 2;
+                    this.rotV = (Math.random() - 0.5) * 0.3;
+                    this.shape = Math.floor(Math.random() * 3);
+                    this.settled = false;
+                    this.settleTime = 0;
+                }
+                update() {
+                    if (this.settled) {
+                        this.settleTime++;
+                        return this.settleTime < 500;
+                    }
+                    this.vy += gravity;
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.rot += this.rotV;
+                    this.vx *= friction;
+                    const bounds = doorOpen
+                        ? { left: 0, right: W, bottom: H - 20 }
+                        : {
+                              left: machine.glassX + 15,
+                              right: machine.glassX + machine.glassW - 15,
+                              bottom: machine.floorY - this.size,
+                          };
+                    if (this.x < bounds.left + this.size) {
+                        this.x = bounds.left + this.size;
+                        this.vx *= -bounce;
+                    }
+                    if (this.x > bounds.right - this.size) {
+                        this.x = bounds.right - this.size;
+                        this.vx *= -bounce;
+                    }
+                    if (this.y > bounds.bottom) {
+                        this.y = bounds.bottom;
+                        if (Math.abs(this.vy) < 1 && Math.abs(this.vx) < 0.5) {
+                            this.settled = true;
+                            if (doorOpen && this.y > machine.floorY)
+                                floorPopcorn.push({
+                                    x: this.x,
+                                    y: this.y,
+                                    size: this.size,
+                                    rot: this.rot,
+                                    shape: this.shape,
+                                });
+                        }
+                        this.vy *= -bounce * 0.4;
+                        this.vx *= friction;
+                    }
+                    for (let p of popcorns) {
+                        if (p !== this && !p.settled) {
+                            const dx = p.x - this.x,
+                                dy = p.y - this.y,
+                                d = Math.sqrt(dx * dx + dy * dy);
+                            if (d < this.size + p.size && d > 0) {
+                                const nx = dx / d,
+                                    ny = dy / d;
+                                this.vx -= nx * 0.5;
+                                this.vy -= ny * 0.5;
+                            }
+                        }
+                    }
+                    return true;
+                }
+                draw() {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.rot);
+                    ctx.fillStyle = "#fffef5";
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    if (this.shape === 0) {
+                        for (let i = 0; i < 5; i++) {
+                            const a = (i * Math.PI * 2) / 5,
+                                r = this.size * (0.8 + Math.sin(a * 3) * 0.3);
+                            ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                        }
+                    } else if (this.shape === 1) {
+                        for (let i = 0; i < 6; i++) {
+                            const a = (i * Math.PI * 2) / 6,
+                                r = this.size * (0.7 + Math.cos(a * 2) * 0.3);
+                            ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                        }
+                    } else {
+                        ctx.arc(0, 0, this.size * 0.8, 0, Math.PI * 2);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = "#f5e6c8";
+                    ctx.beginPath();
+                    ctx.arc(
+                        -this.size * 0.2,
+                        -this.size * 0.2,
+                        this.size * 0.3,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            class Steam {
+                constructor() {
+                    this.x =
+                        machine.glassX +
+                        machine.glassW / 2 +
+                        (Math.random() - 0.5) * 100;
+                    this.y = machine.glassY + 50;
+                    this.size = 5 + Math.random() * 10;
+                    this.alpha = 0.6;
+                    this.vx = (Math.random() - 0.5) * 0.5;
+                }
+                update() {
+                    this.y -= 1 + Math.random();
+                    this.x += this.vx + Math.sin(time * 0.05 + this.x) * 0.5;
+                    this.alpha -= 0.008;
+                    this.size += 0.3;
+                    return this.alpha > 0;
+                }
+                draw() {
+                    ctx.fillStyle = `rgba(255,255,255,${this.alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            class ButterDrip {
+                constructor() {
+                    this.x =
+                        machine.glassX +
+                        50 +
+                        Math.random() * (machine.glassW - 100);
+                    this.y = machine.glassY + 20;
+                    this.size = 4;
+                    this.vy = 0;
+                    this.alpha = 0.9;
+                }
+                update() {
+                    this.vy += 0.1;
+                    this.y += this.vy;
+                    this.alpha -= 0.005;
+                    return this.y < machine.floorY && this.alpha > 0;
+                }
+                draw() {
+                    ctx.fillStyle = `rgba(255,200,50,${this.alpha})`;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        this.x,
+                        this.y,
+                        this.size,
+                        this.size * 1.5,
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+            }
+
+            function drawMachine() {
+                ctx.fillStyle = "#8b0000";
+                ctx.strokeStyle = "#222";
+                ctx.lineWidth = 4;
+                ctx.fillRect(machine.x, machine.y, machine.w, machine.h);
+                ctx.strokeRect(machine.x, machine.y, machine.w, machine.h);
+                const gradient = ctx.createLinearGradient(
+                    machine.glassX,
+                    0,
+                    machine.glassX + machine.glassW,
+                    0
+                );
+                gradient.addColorStop(0, "rgba(200,220,255,0.15)");
+                gradient.addColorStop(0.5, "rgba(255,255,255,0.05)");
+                gradient.addColorStop(1, "rgba(200,220,255,0.15)");
+                ctx.fillStyle = "#1a1a1a";
+                ctx.fillRect(
+                    machine.glassX - 10,
+                    machine.glassY - 10,
+                    machine.glassW + 20,
+                    machine.glassH + 30
+                );
+                ctx.fillStyle = `rgba(255,${150 + lightPulse * 50},${
+                    100 + lightPulse * 30
+                },0.1)`;
+                ctx.fillRect(
+                    machine.glassX,
+                    machine.glassY,
+                    machine.glassW,
+                    machine.glassH
+                );
+                ctx.fillStyle = gradient;
+                ctx.fillRect(
+                    machine.glassX,
+                    machine.glassY,
+                    machine.glassW,
+                    machine.glassH
+                );
+                ctx.strokeStyle = "#222";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(
+                    machine.glassX,
+                    machine.glassY,
+                    machine.glassW,
+                    machine.glassH
+                );
+                ctx.fillStyle = "#222";
+                ctx.fillRect(
+                    machine.glassX,
+                    machine.floorY,
+                    machine.glassW,
+                    10
+                );
+                ctx.fillStyle = "#c0c0c0";
+                ctx.fillRect(
+                    machine.x + machine.w / 2 - 60,
+                    machine.y + machine.h - 40,
+                    120,
+                    35
+                );
+                ctx.strokeRect(
+                    machine.x + machine.w / 2 - 60,
+                    machine.y + machine.h - 40,
+                    120,
+                    35
+                );
+                ctx.fillStyle = "#ff6b35";
+                ctx.strokeStyle = "#222";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(machine.x + machine.w / 2 - 50, machine.y - 30);
+                ctx.lineTo(machine.x + machine.w / 2 + 50, machine.y - 30);
+                ctx.lineTo(machine.x + machine.w / 2 + 40, machine.y);
+                ctx.lineTo(machine.x + machine.w / 2 - 40, machine.y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 16px Georgia";
+                ctx.textAlign = "center";
+                ctx.fillText(
+                    "FRESH",
+                    machine.x + machine.w / 2,
+                    machine.y - 40
+                );
+                ctx.fillText(
+                    "POPCORN",
+                    machine.x + machine.w / 2,
+                    machine.y - 15
+                );
+                ctx.strokeStyle = "#222";
+                ctx.lineWidth = 0.5;
+                ctx.strokeText(
+                    "FRESH",
+                    machine.x + machine.w / 2,
+                    machine.y - 40
+                );
+                ctx.strokeText(
+                    "POPCORN",
+                    machine.x + machine.w / 2,
+                    machine.y - 15
+                );
+                for (let i = 0; i < 3; i++) {
+                    ctx.fillStyle = "#ffcc00";
+                    ctx.beginPath();
+                    ctx.arc(
+                        machine.x + 30 + i * 20,
+                        machine.y + 20,
+                        6,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+                ctx.fillStyle = "rgba(255,255,255,0.1)";
+                ctx.beginPath();
+                ctx.moveTo(machine.glassX + 10, machine.glassY + 10);
+                ctx.lineTo(machine.glassX + 30, machine.glassY + 10);
+                ctx.lineTo(machine.glassX + 10, machine.glassY + 80);
+                ctx.closePath();
+                ctx.fill();
+                if (doorOpen) {
+                    ctx.save();
+                    ctx.translate(
+                        machine.glassX,
+                        machine.glassY + machine.glassH
+                    );
+                    ctx.rotate(-0.3);
+                    ctx.fillStyle = "rgba(150,200,255,0.2)";
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 2;
+                    ctx.fillRect(
+                        0,
+                        -machine.glassH * 0.6,
+                        machine.glassW * 0.3,
+                        machine.glassH * 0.6
+                    );
+                    ctx.strokeRect(
+                        0,
+                        -machine.glassH * 0.6,
+                        machine.glassW * 0.3,
+                        machine.glassH * 0.6
+                    );
+                    ctx.restore();
+                }
+            }
+
+            function drawBursts() {
+                for (let b of bursts) {
+                    for (let p of b.particles) {
+                        ctx.fillStyle = `rgba(255,255,200,${1 - b.age / 20})`;
+                        ctx.beginPath();
+                        ctx.arc(
+                            b.x + p.x,
+                            b.y + p.y,
+                            p.size * (1 - b.age / 20),
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                        p.x += p.vx;
+                        p.y += p.vy;
+                    }
+                }
+            }
+
+            function drawFloorPopcorn() {
+                for (let p of floorPopcorn) {
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rot);
+                    ctx.fillStyle = "#fffef5";
+                    ctx.strokeStyle = "#222";
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, p.size * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
+            function update() {
+                time++;
+                lightPulse = Math.sin(time * 0.05) * 0.5 + 0.5;
+                kernels = kernels.filter((k) => k.update());
+                popcorns = popcorns.filter((p) => p.update());
+                steam = steam.filter((s) => s.update());
+                bursts = bursts.filter((b) => {
+                    b.age++;
+                    return b.age < 20;
+                });
+                butterDrips = butterDrips.filter((b) => b.update());
+                const h = parseInt(heatSlider.value);
+                if (Math.random() < h * 0.02 && popcorns.length > 0)
+                    steam.push(new Steam());
+                if (Math.random() < 0.005) butterDrips.push(new ButterDrip());
+            }
+
+            function draw() {
+                ctx.fillStyle = "#f5f0e6";
+                ctx.fillRect(0, 0, W, H);
+                for (let i = 0; i < 50; i++) {
+                    ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.03})`;
+                    ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+                }
+                drawMachine();
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(
+                    machine.glassX,
+                    machine.glassY,
+                    machine.glassW,
+                    machine.glassH
+                );
+                ctx.clip();
+                for (let k of kernels) k.draw();
+                for (let p of popcorns)
+                    if (!doorOpen || p.y < machine.floorY) p.draw();
+                for (let b of butterDrips) b.draw();
+                drawBursts();
+                ctx.restore();
+                for (let s of steam) s.draw();
+                if (doorOpen)
+                    for (let p of popcorns) if (p.y >= machine.floorY) p.draw();
+                drawFloorPopcorn();
+                ctx.fillStyle = "#222";
+                ctx.font = "12px Georgia";
+                ctx.textAlign = "left";
+                ctx.fillText(
+                    `Kernels: ${kernels.length} | Popcorn: ${
+                        popcorns.length + floorPopcorn.length
+                    }`,
+                    10,
+                    20
+                );
+            }
+
+            function loop() {
+                update();
+                draw();
+                requestAnimationFrame(loop);
+            }
+
+            canvas.addEventListener("click", (e) => {
+                const rect = canvas.getBoundingClientRect(),
+                    x = e.clientX - rect.left,
+                    y = e.clientY - rect.top;
+                if (
+                    x > machine.glassX &&
+                    x < machine.glassX + machine.glassW &&
+                    y > machine.glassY &&
+                    y < machine.glassY + machine.glassH
+                ) {
+                    for (let i = 0; i < 5; i++)
+                        kernels.push(
+                            new Kernel(
+                                machine.glassX +
+                                    machine.glassW / 2 +
+                                    (Math.random() - 0.5) * 50,
+                                machine.glassY + 30
+                            )
+                        );
+                }
+            });
+
+            doorBtn.addEventListener("click", () => {
+                doorOpen = !doorOpen;
+                doorBtn.textContent = doorOpen ? "Close Door" : "Open Door";
+            });
+            resetBtn.addEventListener("click", () => {
+                kernels = [];
+                popcorns = [];
+                steam = [];
+                bursts = [];
+                butterDrips = [];
+                floorPopcorn = [];
+                doorOpen = false;
+                doorBtn.textContent = "Open Door";
+            });
+
+            loop();
+        </script>
+    </body>
+</html>

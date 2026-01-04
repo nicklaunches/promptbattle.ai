@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Vintage Popcorn Machine (Canvas)</title>
+        <style>
+            :root {
+                --paper: #f5f0e6;
+                --orange: #ff6b35;
+                --ink: #14120f;
+                --cream: #fff7ee;
+                --gold: #ffd166;
+            }
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+            }
+            body {
+                background: var(--paper);
+                font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
+                    Roboto, Helvetica, Arial;
+                color: var(--ink);
+                overflow: hidden;
+            }
+            .ui {
+                position: fixed;
+                left: 16px;
+                top: 16px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                flex-wrap: wrap;
+                padding: 10px 12px;
+                border: 2px solid var(--ink);
+                border-radius: 14px;
+                background: rgba(245, 240, 230, 0.85);
+                box-shadow: 0 10px 0 rgba(20, 18, 15, 0.08);
+                backdrop-filter: blur(6px);
+                user-select: none;
+            }
+            .ui .badge {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 10px;
+                border: 2px solid var(--ink);
+                border-radius: 12px;
+                background: linear-gradient(180deg, #fff7ee, #f5f0e6);
+            }
+            .ui label {
+                font-weight: 700;
+                font-size: 13px;
+                letter-spacing: 0.2px;
+            }
+            .ui input[type="range"] {
+                width: 180px;
+                accent-color: var(--orange);
+            }
+            .btn {
+                appearance: none;
+                border: 2px solid var(--ink);
+                background: var(--orange);
+                color: var(--ink);
+                font-weight: 800;
+                padding: 8px 12px;
+                border-radius: 12px;
+                cursor: pointer;
+                box-shadow: 0 6px 0 rgba(20, 18, 15, 0.18);
+                transform: translateY(0);
+                transition: transform 0.08s ease, box-shadow 0.08s ease,
+                    filter 0.12s ease;
+            }
+            .btn:active {
+                transform: translateY(3px);
+                box-shadow: 0 3px 0 rgba(20, 18, 15, 0.18);
+            }
+            .btn.secondary {
+                background: #fff;
+            }
+            .hint {
+                font-size: 12px;
+                opacity: 0.9;
+                padding: 6px 10px;
+                border: 2px dashed rgba(20, 18, 15, 0.35);
+                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.25);
+            }
+            canvas {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="ui">
+            <div class="badge">
+                <label for="heat">Heat</label>
+                <input id="heat" type="range" min="0" max="100" value="65" />
+                <span id="heatVal" style="min-width: 36px; font-weight: 900"
+                    >65%</span
+                >
+            </div>
+            <button id="doorBtn" class="btn">Open Door</button>
+            <button id="resetBtn" class="btn secondary">Reset</button>
+            <div class="hint">
+                Click the machine to drop kernels. Heat controls pop intensity.
+            </div>
+        </div>
+
+        <canvas id="c"></canvas>
+
+        <script>
+            (() => {
+                // =========================
+                // Retro Popcorn Machine Sim
+                // Single-file, no libraries
+                // =========================
+
+                const canvas = document.getElementById("c");
+                const ctx = canvas.getContext("2d");
+
+                const heatEl = document.getElementById("heat");
+                const heatValEl = document.getElementById("heatVal");
+                const doorBtn = document.getElementById("doorBtn");
+                const resetBtn = document.getElementById("resetBtn");
+
+                // HiDPI
+                function resize() {
+                    const dpr = Math.max(
+                        1,
+                        Math.min(2, window.devicePixelRatio || 1)
+                    );
+                    canvas.width = Math.floor(window.innerWidth * dpr);
+                    canvas.height = Math.floor(window.innerHeight * dpr);
+                    canvas.style.width = window.innerWidth + "px";
+                    canvas.style.height = window.innerHeight + "px";
+                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                    rebuildScene();
+                }
+                window.addEventListener("resize", resize);
+
+                // Paper noise (prebaked)
+                const noise = document.createElement("canvas");
+                const nctx = noise.getContext("2d");
+                function bakeNoise() {
+                    noise.width = 220;
+                    noise.height = 220;
+                    const img = nctx.createImageData(noise.width, noise.height);
+                    for (let i = 0; i < img.data.length; i += 4) {
+                        const v = 235 + ((Math.random() * 20) | 0);
+                        img.data[i + 0] = v;
+                        img.data[i + 1] = v - 2;
+                        img.data[i + 2] = v - 6;
+                        img.data[i + 3] = (Math.random() * 55) | 0;
+                    }
+                    nctx.putImageData(img, 0, 0);
+                }
+                bakeNoise();
+
+                // ---- World params
+                const ink = "#14120f";
+                const paper = "#f5f0e6";
+                const orange = "#ff6b35";
+                const cream = "#fff7ee";
+                const gold = "#ffd166";
+
+                let t0 = performance.now();
+                let time = 0;
+
+                // Geometry in CSS pixels
+                let W = 0,
+                    H = 0;
+                let floorY = 0;
+
+                // Machine geometry
+                const machine = {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0,
+                    cab: { x: 0, y: 0, w: 0, h: 0 }, // glass cabinet outer
+                    inner: { x: 0, y: 0, w: 0, h: 0 }, // collision bounds inside glass
+                    base: { x: 0, y: 0, w: 0, h: 0 }, // base box
+                    door: { x: 0, y: 0, w: 0, h: 0 }, // door location
+                    gap: { x1: 0, x2: 0, y: 0 }, // door gap in inner bottom when open
+                };
+
+                let doorOpen = false;
+
+                // Physics
+                const GRAV = 1400; // px/s^2
+                const AIR = 0.995; // global damping
+                const WALL_FRICTION = 0.92;
+                const REST_KERNEL = 0.28;
+                const REST_POP = 0.38;
+
+                // Particle store
+                const bodies = []; // kernels + popcorn
+                const sparks = []; // pop bursts
+                const steam = []; // steam
+                const drizzle = []; // butter drops
+
+                // Spatial hash for body-body collisions
+                const grid = new Map();
+                let cellSize = 22;
+
+                function hashKey(ix, iy) {
+                    return ix + "," + iy;
+                }
+
+                function rebuildScene() {
+                    W = window.innerWidth;
+                    H = window.innerHeight;
+                    floorY = Math.min(H - 54, H * 0.9);
+
+                    const s = Math.min(W, H);
+                    const mW = Math.min(520, s * 0.52);
+                    const mH = Math.min(650, s * 0.78);
+
+                    machine.w = mW;
+                    machine.h = mH;
+                    machine.x = (W - mW) * 0.5;
+                    machine.y = floorY - mH - 8;
+
+                    // Cabinet (glass) occupies top portion
+                    const cabPad = 18;
+                    const cabH = mH * 0.62;
+                    machine.cab.x = machine.x + cabPad;
+                    machine.cab.y = machine.y + cabPad;
+                    machine.cab.w = mW - cabPad * 2;
+                    machine.cab.h = cabH - cabPad * 0.2;
+
+                    // Inner collision bounds (slightly inset)
+                    const inPad = 14;
+                    machine.inner.x = machine.cab.x + inPad;
+                    machine.inner.y = machine.cab.y + inPad;
+                    machine.inner.w = machine.cab.w - inPad * 2;
+                    machine.inner.h = machine.cab.h - inPad * 2;
+
+                    // Base
+                    const baseY = machine.cab.y + machine.cab.h + 14;
+                    machine.base.x = machine.x + 22;
+                    machine.base.y = baseY;
+                    machine.base.w = mW - 44;
+                    machine.base.h = machine.y + mH - baseY;
+
+                    // Door on the base front
+                    const dW = machine.base.w * 0.44;
+                    const dH = machine.base.h * 0.28;
+                    machine.door.w = dW;
+                    machine.door.h = dH;
+                    machine.door.x =
+                        machine.base.x + (machine.base.w - dW) * 0.5;
+                    machine.door.y = machine.base.y + machine.base.h * 0.35;
+
+                    // Gap on inner bottom (for spill)
+                    const gapW = machine.inner.w * 0.42;
+                    const gapX1 =
+                        machine.inner.x + (machine.inner.w - gapW) * 0.5;
+                    const gapX2 = gapX1 + gapW;
+                    machine.gap.x1 = gapX1;
+                    machine.gap.x2 = gapX2;
+                    machine.gap.y = machine.inner.y + machine.inner.h; // inner bottom
+                    cellSize = Math.max(
+                        18,
+                        Math.min(28, Math.floor(machine.inner.w / 22))
+                    );
+                }
+
+                // Heat mapping
+                function heat01() {
+                    return (parseInt(heatEl.value, 10) || 0) / 100;
+                }
+
+                heatEl.addEventListener("input", () => {
+                    heatValEl.textContent = heatEl.value + "%";
+                });
+
+                doorBtn.addEventListener("click", () => {
+                    doorOpen = !doorOpen;
+                    doorBtn.textContent = doorOpen ? "Close Door" : "Open Door";
+                });
+
+                resetBtn.addEventListener("click", resetAll);
+
+                function resetAll() {
+                    bodies.length = 0;
+                    sparks.length = 0;
+                    steam.length = 0;
+                    drizzle.length = 0;
+                    doorOpen = false;
+                    doorBtn.textContent = "Open Door";
+                }
+
+                // Create kernels on click
+                function inMachine(px, py) {
+                    // clickable if inside the overall machine silhouette
+                    const mx = machine.x,
+                        my = machine.y;
+                    return (
+                        px >= mx &&
+                        px <= mx + machine.w &&
+                        py >= my &&
+                        py <= my + machine.h
+                    );
+                }
+
+                canvas.addEventListener("pointerdown", (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    if (!inMachine(x, y)) return;
+                    dropKernels(x);
+                });
+
+                function dropKernels(clickX) {
+                    // drop a handful at the top of the cabinet
+                    const h = heat01();
+                    const count = 18 + Math.floor(Math.random() * 10);
+                    for (let i = 0; i < count; i++) {
+                        const x = clamp(
+                            clickX + randn() * 14,
+                            machine.inner.x + 12,
+                            machine.inner.x + machine.inner.w - 12
+                        );
+                        const y = machine.inner.y + 10 + Math.random() * 8;
+                        bodies.push(makeKernel(x, y, h));
+                    }
+                }
+
+                function makeKernel(x, y, h) {
+                    const r = 3.6 + Math.random() * 0.8;
+                    const popDelay =
+                        lerp(1.35, 0.35, clamp01(h)) + Math.random() * 0.4; // seconds
+                    return {
+                        type: "kernel",
+                        x,
+                        y,
+                        vx: randn() * 40,
+                        vy: 30 + Math.random() * 60,
+                        r,
+                        m: 1.0,
+                        rot: Math.random() * Math.PI * 2,
+                        spin: randn() * 6,
+                        born: time,
+                        popAt: time + popDelay,
+                        shake: 0,
+                        buttered: false,
+                        outside: false,
+                    };
+                }
+
+                function popKernel(b) {
+                    // Convert kernel -> popcorn (fluffy)
+                    const h = heat01();
+                    const burst =
+                        lerp(280, 820, h) * (0.85 + Math.random() * 0.35);
+
+                    b.type = "pop";
+                    b.r = 9 + Math.random() * 5.5;
+                    b.m = 0.72;
+                    b.vx += randn() * burst * 0.32;
+                    b.vy -= burst * (0.75 + Math.random() * 0.35);
+                    b.spin = randn() * 10;
+                    b.rot = Math.random() * Math.PI * 2;
+
+                    // Burst sparks
+                    const sCount = 14 + ((Math.random() * 10) | 0);
+                    for (let i = 0; i < sCount; i++) {
+                        sparks.push({
+                            x: b.x,
+                            y: b.y,
+                            vx: randn() * burst * 0.45,
+                            vy: randn() * burst * 0.45,
+                            life: 0.35 + Math.random() * 0.25,
+                            age: 0,
+                            r: 1.1 + Math.random() * 1.4,
+                        });
+                    }
+
+                    // Tiny puff steam
+                    for (let i = 0; i < 6; i++) {
+                        steam.push({
+                            x: b.x + randn() * 8,
+                            y: b.y + randn() * 6,
+                            vx: randn() * 20,
+                            vy: -60 - Math.random() * 80,
+                            life: 0.8 + Math.random() * 0.6,
+                            age: 0,
+                            r: 7 + Math.random() * 10,
+                            a: 0.25 + Math.random() * 0.18,
+                        });
+                    }
+                }
+
+                // Butter drizzle occasionally
+                let butterTimer = 0;
+                function maybeButter(dt) {
+                    const h = heat01();
+                    butterTimer -= dt;
+                    // more heat => more buttery chaos
+                    const interval = lerp(7.5, 2.6, h);
+                    if (butterTimer <= 0) {
+                        butterTimer = interval * (0.7 + Math.random() * 0.7);
+                        // spawn drizzle
+                        const x =
+                            machine.inner.x +
+                            machine.inner.w * (0.65 + Math.random() * 0.25);
+                        const y = machine.inner.y + 6;
+                        drizzle.push({
+                            x,
+                            y,
+                            vx: randn() * 35,
+                            vy: 80 + Math.random() * 120,
+                            r: 3 + Math.random() * 2,
+                            life: 1.2,
+                            age: 0,
+                        });
+                    }
+                }
+
+                // Steam continuous
+                function spawnSteam(dt) {
+                    const h = heat01();
+                    const rate = lerp(6, 22, h); // particles per second
+                    const n = rate * dt;
+                    const k = Math.floor(n);
+                    const extra = Math.random() < n - k ? 1 : 0;
+                    for (let i = 0; i < k + extra; i++) {
+                        const x =
+                            machine.inner.x +
+                            machine.inner.w * (0.25 + Math.random() * 0.5);
+                        const y =
+                            machine.inner.y +
+                            machine.inner.h * (0.65 + Math.random() * 0.25);
+                        steam.push({
+                            x: x + randn() * 8,
+                            y: y + randn() * 6,
+                            vx: randn() * 18,
+                            vy: -80 - Math.random() * 140,
+                            life: 1.0 + Math.random() * 0.9,
+                            age: 0,
+                            r: 10 + Math.random() * 16,
+                            a: 0.1 + Math.random() * 0.12,
+                        });
+                    }
+                }
+
+                // --- Helpers
+                function clamp(v, a, b) {
+                    return Math.max(a, Math.min(b, v));
+                }
+                function clamp01(v) {
+                    return clamp(v, 0, 1);
+                }
+                function lerp(a, b, t) {
+                    return a + (b - a) * t;
+                }
+                function randn() {
+                    // quick-ish normal-ish noise
+                    return (
+                        (Math.random() +
+                            Math.random() +
+                            Math.random() +
+                            Math.random() -
+                            2) *
+                        0.9
+                    );
+                }
+
+                // --- Physics + collisions
+                function step(dt) {
+                    const h = heat01();
+
+                    // butter + steam
+                    maybeButter(dt);
+                    spawnSteam(dt);
+
+                    // update drizzle
+                    for (let i = drizzle.length - 1; i >= 0; i--) {
+                        const d = drizzle[i];
+                        d.age += dt;
+                        d.vy += GRAV * 0.55 * dt;
+                        d.vx *= 0.995;
+                        d.vy *= 0.998;
+                        d.x += d.vx * dt;
+                        d.y += d.vy * dt;
+
+                        // collide with inner walls (so it stays in cabinet)
+                        collideWithCabinet(d, 0.18);
+
+                        // butter popcorn on contact
+                        for (let j = 0; j < bodies.length; j++) {
+                            const b = bodies[j];
+                            if (b.type !== "pop") continue;
+                            const dx = b.x - d.x;
+                            const dy = b.y - d.y;
+                            const rr = b.r + d.r + 2;
+                            if (dx * dx + dy * dy < rr * rr) {
+                                b.buttered = true;
+                                // small splash sparks (gold)
+                                for (let k = 0; k < 6; k++) {
+                                    sparks.push({
+                                        x: d.x,
+                                        y: d.y,
+                                        vx: randn() * 240,
+                                        vy: randn() * 240,
+                                        life: 0.22 + Math.random() * 0.16,
+                                        age: 0,
+                                        r: 0.9 + Math.random() * 1.2,
+                                        butter: true,
+                                    });
+                                }
+                                drizzle.splice(i, 1);
+                                break;
+                            }
+                        }
+
+                        if (d.age > d.life) drizzle.splice(i, 1);
+                    }
+
+                    // update steam
+                    for (let i = steam.length - 1; i >= 0; i--) {
+                        const s = steam[i];
+                        s.age += dt;
+                        s.x += s.vx * dt;
+                        s.y += s.vy * dt;
+                        s.vx *= 0.99;
+                        s.vy *= 0.985;
+                        if (s.age > s.life) steam.splice(i, 1);
+                    }
+
+                    // update sparks
+                    for (let i = sparks.length - 1; i >= 0; i--) {
+                        const p = sparks[i];
+                        p.age += dt;
+                        p.vy += GRAV * 0.45 * dt;
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.vx *= 0.985;
+                        p.vy *= 0.985;
+                        if (p.age > p.life) sparks.splice(i, 1);
+                    }
+
+                    // build spatial hash
+                    grid.clear();
+                    for (let i = 0; i < bodies.length; i++) {
+                        const b = bodies[i];
+                        const cs = cellSize;
+                        const ix = Math.floor(b.x / cs);
+                        const iy = Math.floor(b.y / cs);
+                        const key = hashKey(ix, iy);
+                        let arr = grid.get(key);
+                        if (!arr) {
+                            arr = [];
+                            grid.set(key, arr);
+                        }
+                        arr.push(i);
+                    }
+
+                    // update bodies
+                    const popChance = lerp(0.55, 1.85, h); // affects "violent" quick popping (multiplier)
+                    for (let i = 0; i < bodies.length; i++) {
+                        const b = bodies[i];
+
+                        // kernel pre-pop shake
+                        if (b.type === "kernel") {
+                            const until = b.popAt - time;
+                            // extra chaotic if heat high
+                            const shakeAmt =
+                                clamp01(1 - until / 0.55) * (0.65 + h * 1.25);
+                            b.shake = shakeAmt;
+
+                            // If heat is high, some kernels pop sooner randomly
+                            if (
+                                time > b.born + 0.12 &&
+                                time < b.popAt &&
+                                Math.random() < dt * 0.35 * popChance * h
+                            ) {
+                                b.popAt = Math.min(
+                                    b.popAt,
+                                    time + 0.08 + Math.random() * 0.22
+                                );
+                            }
+
+                            // Pop moment
+                            if (time >= b.popAt) popKernel(b);
+                        }
+
+                        // forces
+                        b.vy += GRAV * dt;
+                        b.vx *= AIR;
+                        b.vy *= AIR;
+
+                        // integrate
+                        b.x += b.vx * dt;
+                        b.y += b.vy * dt;
+                        b.rot += b.spin * dt;
+
+                        // detect outside cabinet if it left via door gap
+                        if (!b.outside) {
+                            // If it fell below inner bottom and is in the gap area, consider it outside.
+                            if (
+                                doorOpen &&
+                                b.y - b.r > machine.gap.y + 2 &&
+                                b.x > machine.gap.x1 - 10 &&
+                                b.x < machine.gap.x2 + 10
+                            ) {
+                                b.outside = true;
+                            }
+                        }
+
+                        // collisions
+                        if (!b.outside) {
+                            collideWithCabinet(
+                                b,
+                                b.type === "kernel" ? REST_KERNEL : REST_POP
+                            );
+                        } else {
+                            collideWithWorld(
+                                b,
+                                b.type === "kernel" ? REST_KERNEL : REST_POP
+                            );
+                        }
+                    }
+
+                    // body-body collisions (simple pile/stack)
+                    resolveBodyCollisions();
+
+                    // keep counts sane
+                    if (bodies.length > 520)
+                        bodies.splice(0, bodies.length - 520);
+                    if (steam.length > 450) steam.splice(0, steam.length - 450);
+                    if (sparks.length > 520)
+                        sparks.splice(0, sparks.length - 520);
+                }
+
+                function collideWithCabinet(b, rest) {
+                    const x0 = machine.inner.x;
+                    const y0 = machine.inner.y;
+                    const x1 = machine.inner.x + machine.inner.w;
+                    const y1 = machine.inner.y + machine.inner.h;
+
+                    // left/right
+                    if (b.x - b.r < x0) {
+                        b.x = x0 + b.r;
+                        b.vx = Math.abs(b.vx) * rest;
+                        b.vy *= WALL_FRICTION;
+                    } else if (b.x + b.r > x1) {
+                        b.x = x1 - b.r;
+                        b.vx = -Math.abs(b.vx) * rest;
+                        b.vy *= WALL_FRICTION;
+                    }
+
+                    // top
+                    if (b.y - b.r < y0) {
+                        b.y = y0 + b.r;
+                        b.vy = Math.abs(b.vy) * rest;
+                        b.vx *= WALL_FRICTION;
+                    }
+
+                    // bottom with door gap
+                    if (b.y + b.r > y1) {
+                        if (
+                            doorOpen &&
+                            b.x > machine.gap.x1 &&
+                            b.x < machine.gap.x2
+                        ) {
+                            // pass through (spill)
+                        } else {
+                            b.y = y1 - b.r;
+                            b.vy = -Math.abs(b.vy) * rest;
+                            b.vx *= WALL_FRICTION;
+
+                            // subtle "settle" for popcorn
+                            if (b.type === "pop" && Math.abs(b.vy) < 90) {
+                                b.vy *= 0.35;
+                                b.vx *= 0.86;
+                            }
+                        }
+                    }
+                }
+
+                function collideWithWorld(b, rest) {
+                    // floor & screen bounds
+                    const left = 14;
+                    const right = W - 14;
+                    const top = 10;
+
+                    if (b.x - b.r < left) {
+                        b.x = left + b.r;
+                        b.vx = Math.abs(b.vx) * rest;
+                        b.vy *= WALL_FRICTION;
+                    }
+                    if (b.x + b.r > right) {
+                        b.x = right - b.r;
+                        b.vx = -Math.abs(b.vx) * rest;
+                        b.vy *= WALL_FRICTION;
+                    }
+                    if (b.y - b.r < top) {
+                        b.y = top + b.r;
+                        b.vy = Math.abs(b.vy) * rest;
+                        b.vx *= WALL_FRICTION;
+                    }
+
+                    if (b.y + b.r > floorY) {
+                        b.y = floorY - b.r;
+                        b.vy = -Math.abs(b.vy) * rest;
+                        b.vx *= 0.88;
+
+                        if (b.type === "pop" && Math.abs(b.vy) < 95) {
+                            b.vy *= 0.25;
+                            b.vx *= 0.82;
+                        }
+                    }
+                }
+
+                function resolveBodyCollisions() {
+                    const cs = cellSize;
+                    const neigh = [
+                        [0, 0],
+                        [1, 0],
+                        [-1, 0],
+                        [0, 1],
+                        [0, -1],
+                        [1, 1],
+                        [-1, 1],
+                        [1, -1],
+                        [-1, -1],
+                    ];
+
+                    for (let i = 0; i < bodies.length; i++) {
+                        const a = bodies[i];
+                        const ix = Math.floor(a.x / cs);
+                        const iy = Math.floor(a.y / cs);
+
+                        for (const [dx, dy] of neigh) {
+                            const key = hashKey(ix + dx, iy + dy);
+                            const arr = grid.get(key);
+                            if (!arr) continue;
+
+                            for (let k = 0; k < arr.length; k++) {
+                                const j = arr[k];
+                                if (j <= i) continue;
+                                const b = bodies[j];
+
+                                // only collide if both in same region (both inside or both outside)
+                                if (a.outside !== b.outside) continue;
+
+                                const dx2 = b.x - a.x;
+                                const dy2 = b.y - a.y;
+                                const r = a.r + b.r;
+                                const d2 = dx2 * dx2 + dy2 * dy2;
+                                if (d2 === 0 || d2 > r * r) continue;
+
+                                const d = Math.sqrt(d2);
+                                const nx = dx2 / d;
+                                const ny = dy2 / d;
+
+                                // separate overlap
+                                const overlap = r - d;
+                                const totalM = a.m + b.m;
+                                const sa = (b.m / totalM) * overlap;
+                                const sb = (a.m / totalM) * overlap;
+
+                                a.x -= nx * sa;
+                                a.y -= ny * sa;
+                                b.x += nx * sb;
+                                b.y += ny * sb;
+
+                                // simple impulse
+                                const rvx = b.vx - a.vx;
+                                const rvy = b.vy - a.vy;
+                                const vn = rvx * nx + rvy * ny;
+                                if (vn > 0) continue;
+
+                                const e =
+                                    0.12 +
+                                    (a.type === "pop" && b.type === "pop"
+                                        ? 0.18
+                                        : 0.1);
+                                const jImp =
+                                    (-(1 + e) * vn) / (1 / a.m + 1 / b.m);
+                                const impX = jImp * nx;
+                                const impY = jImp * ny;
+
+                                a.vx -= impX / a.m;
+                                a.vy -= impY / a.m;
+                                b.vx += impX / b.m;
+                                b.vy += impY / b.m;
+
+                                // mild tangential friction to help "pile"
+                                const tx = -ny,
+                                    ty = nx;
+                                const vt = rvx * tx + rvy * ty;
+                                const mu = 0.05;
+                                const jt = -vt / (1 / a.m + 1 / b.m);
+                                const jtClamped = clamp(
+                                    jt,
+                                    -mu * jImp,
+                                    mu * jImp
+                                );
+                                a.vx -= (jtClamped * tx) / a.m;
+                                a.vy -= (jtClamped * ty) / a.m;
+                                b.vx += (jtClamped * tx) / b.m;
+                                b.vy += (jtClamped * ty) / b.m;
+                            }
+                        }
+                    }
+                }
+
+                // --- Drawing
+                function draw() {
+                    // background paper
+                    ctx.fillStyle = paper;
+                    ctx.fillRect(0, 0, W, H);
+                    ctx.save();
+                    ctx.globalAlpha = 0.25;
+                    ctx.fillStyle = ctx.createPattern(noise, "repeat");
+                    ctx.fillRect(0, 0, W, H);
+                    ctx.restore();
+
+                    // floor line
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = ink;
+                    ctx.beginPath();
+                    ctx.moveTo(0, floorY + 0.5);
+                    ctx.lineTo(W, floorY + 0.5);
+                    ctx.stroke();
+
+                    // subtle shadow under machine
+                    ctx.save();
+                    ctx.globalAlpha = 0.14;
+                    ctx.fillStyle = ink;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        machine.x + machine.w * 0.5,
+                        floorY + 10,
+                        machine.w * 0.42,
+                        18,
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.restore();
+
+                    // machine back glow (pulsing heat)
+                    drawHeatGlow();
+
+                    // machine body
+                    drawMachine();
+
+                    // steam behind glass (some)
+                    drawSteam(true);
+
+                    // popcorn/kernels
+                    drawBodies();
+
+                    // steam in front (some)
+                    drawSteam(false);
+
+                    // sparks
+                    drawSparks();
+
+                    // butter drizzle
+                    drawDrizzle();
+
+                    // little caption on machine
+                    drawLabel();
+                }
+
+                function drawHeatGlow() {
+                    const h = heat01();
+                    const pulse =
+                        0.65 +
+                        0.35 * Math.sin(time * 5.4) +
+                        0.12 * Math.sin(time * 17.1);
+                    const a = clamp01(0.08 + h * 0.22) * pulse;
+
+                    const x = machine.inner.x + machine.inner.w * 0.5;
+                    const y = machine.inner.y + machine.inner.h * 0.72;
+                    const r = machine.inner.w * 0.55;
+
+                    const g = ctx.createRadialGradient(x, y, 20, x, y, r);
+                    g.addColorStop(0, `rgba(255,209,102,${a})`);
+                    g.addColorStop(0.55, `rgba(255,107,53,${a * 0.55})`);
+                    g.addColorStop(1, `rgba(255,107,53,0)`);
+                    ctx.fillStyle = g;
+                    ctx.fillRect(
+                        machine.inner.x - 30,
+                        machine.inner.y - 30,
+                        machine.inner.w + 60,
+                        machine.inner.h + 80
+                    );
+                }
+
+                function drawMachine() {
+                    // Stand / frame
+                    const mx = machine.x,
+                        my = machine.y,
+                        mw = machine.w,
+                        mh = machine.h;
+
+                    // Outer frame
+                    roundRect(mx, my, mw, mh, 22);
+                    ctx.fillStyle = "#fff";
+                    ctx.fill();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = ink;
+                    ctx.stroke();
+
+                    // Orange/red metal accents
+                    const topBarH = 42;
+                    roundRect(mx + 8, my + 8, mw - 16, topBarH, 18);
+                    ctx.fillStyle = orange;
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.stroke();
+
+                    // Side posts
+                    ctx.fillStyle = orange;
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 3;
+                    const postW = 28;
+                    roundRect(
+                        mx + 10,
+                        my + topBarH,
+                        postW,
+                        mh - topBarH - 12,
+                        14
+                    );
+                    ctx.fill();
+                    ctx.stroke();
+                    roundRect(
+                        mx + mw - 10 - postW,
+                        my + topBarH,
+                        postW,
+                        mh - topBarH - 12,
+                        14
+                    );
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Cabinet glass
+                    drawCabinetGlass();
+
+                    // Base box (metal)
+                    drawBase();
+
+                    // Knob + little details
+                    drawDetails();
+                }
+
+                function drawCabinetGlass() {
+                    const c = machine.cab;
+
+                    // cabinet panel background
+                    roundRect(c.x, c.y, c.w, c.h, 16);
+                    ctx.fillStyle = "#fff";
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Glass fill (slight tint)
+                    ctx.save();
+                    ctx.globalAlpha = 0.1;
+                    ctx.fillStyle = "#8fb6c9";
+                    roundRect(c.x + 6, c.y + 6, c.w - 12, c.h - 12, 14);
+                    ctx.fill();
+                    ctx.restore();
+
+                    // Inner border
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    roundRect(c.x + 8, c.y + 8, c.w - 16, c.h - 16, 12);
+                    ctx.stroke();
+
+                    // Subtle reflections
+                    ctx.save();
+                    ctx.globalAlpha = 0.18;
+                    ctx.strokeStyle = "#fff";
+                    ctx.lineWidth = 6;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    ctx.moveTo(c.x + c.w * 0.18, c.y + c.h * 0.15);
+                    ctx.lineTo(c.x + c.w * 0.38, c.y + c.h * 0.05);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(c.x + c.w * 0.62, c.y + c.h * 0.12);
+                    ctx.lineTo(c.x + c.w * 0.86, c.y + c.h * 0.02);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // Heating element plate
+                    const plateY = machine.inner.y + machine.inner.h * 0.78;
+                    ctx.save();
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = "#fff";
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    roundRect(
+                        machine.inner.x + 12,
+                        plateY,
+                        machine.inner.w - 24,
+                        machine.inner.h * 0.16,
+                        12
+                    );
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // orange vents
+                    ctx.fillStyle = orange;
+                    ctx.globalAlpha = 0.75;
+                    const ventN = 8;
+                    for (let i = 0; i < ventN; i++) {
+                        const vx =
+                            machine.inner.x +
+                            26 +
+                            (i * (machine.inner.w - 52)) / (ventN - 1);
+                        ctx.beginPath();
+                        ctx.roundRect(vx - 7, plateY + 10, 14, 10, 6);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawBase() {
+                    const b = machine.base;
+
+                    // Base front
+                    roundRect(b.x, b.y, b.w, b.h, 18);
+                    ctx.fillStyle = orange;
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Base inset panel
+                    ctx.fillStyle = "#fff";
+                    roundRect(b.x + 12, b.y + 12, b.w - 24, b.h - 24, 14);
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Door
+                    const d = machine.door;
+                    const doorAngle = doorOpen ? 0.45 : 0.0;
+                    ctx.save();
+                    // hinge at top
+                    const hx = d.x + d.w * 0.5;
+                    const hy = d.y + 8;
+                    ctx.translate(hx, hy);
+                    ctx.rotate(doorAngle);
+                    ctx.translate(-hx, -hy);
+
+                    roundRect(d.x, d.y, d.w, d.h, 12);
+                    ctx.fillStyle = doorOpen ? "#fff" : "#fff7ee";
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+
+                    // handle
+                    ctx.beginPath();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = "round";
+                    ctx.moveTo(d.x + d.w * 0.32, d.y + d.h * 0.55);
+                    ctx.lineTo(d.x + d.w * 0.68, d.y + d.h * 0.55);
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // tiny feet
+                    ctx.save();
+                    ctx.fillStyle = ink;
+                    ctx.globalAlpha = 0.25;
+                    for (const fx of [b.x + b.w * 0.18, b.x + b.w * 0.82]) {
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            fx,
+                            b.y + b.h + 6,
+                            26,
+                            10,
+                            0,
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawDetails() {
+                    // A little thermometer gauge on base
+                    const b = machine.base;
+                    const gx = b.x + b.w * 0.18;
+                    const gy = b.y + b.h * 0.25;
+                    const gw = b.w * 0.18;
+                    const gh = b.h * 0.44;
+
+                    roundRect(gx, gy, gw, gh, 14);
+                    ctx.fillStyle = "#fff";
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // fill level = heat
+                    const h = heat01();
+                    const fillH = gh * 0.82 * h;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.roundRect(
+                        gx + 10,
+                        gy + gh - 10 - fillH,
+                        gw - 20,
+                        fillH,
+                        10
+                    );
+                    ctx.fillStyle = gold;
+                    ctx.globalAlpha = 0.95;
+                    ctx.fill();
+                    ctx.restore();
+
+                    // gauge ticks
+                    ctx.strokeStyle = ink;
+                    ctx.globalAlpha = 0.5;
+                    for (let i = 0; i < 6; i++) {
+                        const yy = gy + 14 + (i * (gh - 28)) / 5;
+                        ctx.beginPath();
+                        ctx.moveTo(gx + gw * 0.58, yy);
+                        ctx.lineTo(gx + gw * 0.85, yy);
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+
+                    // popcorn logo circle on top bar
+                    const cx = machine.x + machine.w * 0.5;
+                    const cy = machine.y + 28;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+                    ctx.fillStyle = cream;
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(cx - 5, cy + 2, 5.2, 0, Math.PI * 2);
+                    ctx.arc(cx + 5, cy + 2, 5.2, 0, Math.PI * 2);
+                    ctx.fillStyle = "#fff";
+                    ctx.fill();
+                    ctx.strokeStyle = ink;
+                    ctx.stroke();
+                }
+
+                function drawLabel() {
+                    const x = machine.cab.x + machine.cab.w * 0.5;
+                    const y = machine.base.y + machine.base.h * 0.82;
+                    ctx.save();
+                    ctx.font =
+                        "900 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillStyle = ink;
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillText("CINEMA POP", x, y);
+                    ctx.restore();
+                }
+
+                function drawBodies() {
+                    for (const b of bodies) {
+                        if (b.type === "kernel") drawKernel(b);
+                        else drawPopcorn(b);
+                    }
+                }
+
+                function drawKernel(b) {
+                    const jitter = b.shake * (1.5 + heat01() * 3.5);
+                    const jx = (Math.random() - 0.5) * jitter * 2;
+                    const jy = (Math.random() - 0.5) * jitter * 2;
+
+                    ctx.save();
+                    ctx.translate(b.x + jx, b.y + jy);
+                    ctx.rotate(b.rot);
+
+                    // kernel body
+                    ctx.fillStyle = gold;
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        0,
+                        0,
+                        b.r * 1.15,
+                        b.r * 0.9,
+                        0.2,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // kernel highlight
+                    ctx.globalAlpha = 0.35;
+                    ctx.fillStyle = "#fff";
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        -b.r * 0.25,
+                        -b.r * 0.15,
+                        b.r * 0.45,
+                        b.r * 0.28,
+                        0.3,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+
+                    ctx.restore();
+                }
+
+                function drawPopcorn(b) {
+                    ctx.save();
+                    ctx.translate(b.x, b.y);
+                    ctx.rotate(b.rot * 0.2);
+
+                    // fluffy multi-bubble silhouette
+                    const r = b.r;
+                    const butter = b.buttered ? 1 : 0;
+
+                    // base fill
+                    ctx.fillStyle = butter ? "#fff1d6" : "#fffdf8";
+                    ctx.strokeStyle = ink;
+                    ctx.lineWidth = 2.2;
+
+                    ctx.beginPath();
+                    const bumps = 6;
+                    for (let i = 0; i < bumps; i++) {
+                        const ang = (i / bumps) * Math.PI * 2;
+                        const rr =
+                            r * (0.68 + 0.22 * Math.sin(i * 2.1 + b.rot));
+                        const x = Math.cos(ang) * rr * 0.65;
+                        const y = Math.sin(ang) * rr * 0.55;
+                        ctx.arc(x, y, rr, ang - 1.2, ang + 1.2);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // subtle butter streak
+                    if (butter) {
+                        ctx.save();
+                        ctx.globalAlpha = 0.55;
+                        ctx.strokeStyle = "#ffcf6b";
+                        ctx.lineWidth = 3.5;
+                        ctx.lineCap = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(-r * 0.3, -r * 0.15);
+                        ctx.quadraticCurveTo(0, r * 0.05, r * 0.35, -r * 0.02);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+
+                    // tiny inner shading
+                    ctx.save();
+                    ctx.globalAlpha = 0.14;
+                    ctx.fillStyle = ink;
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        r * 0.1,
+                        r * 0.2,
+                        r * 0.35,
+                        r * 0.25,
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.restore();
+
+                    ctx.restore();
+                }
+
+                function drawSteam(behindGlass) {
+                    // behindGlass: draw only steam inside cabinet region
+                    ctx.save();
+                    for (const s of steam) {
+                        if (behindGlass) {
+                            if (
+                                s.x < machine.cab.x ||
+                                s.x > machine.cab.x + machine.cab.w ||
+                                s.y < machine.cab.y ||
+                                s.y > machine.cab.y + machine.cab.h
+                            )
+                                continue;
+                        } else {
+                            // front steam can be anywhere
+                        }
+                        const p = clamp01(1 - s.age / s.life);
+                        ctx.globalAlpha = s.a * p;
+                        ctx.fillStyle = "#ffffff";
+                        ctx.beginPath();
+                        ctx.arc(
+                            s.x,
+                            s.y,
+                            s.r * (0.6 + 0.5 * (1 - p)),
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawSparks() {
+                    ctx.save();
+                    for (const p of sparks) {
+                        const k = clamp01(1 - p.age / p.life);
+                        const a = k * k;
+                        ctx.globalAlpha = a;
+                        ctx.fillStyle = p.butter ? gold : orange;
+                        ctx.beginPath();
+                        ctx.arc(
+                            p.x,
+                            p.y,
+                            p.r * (0.6 + 0.9 * k),
+                            0,
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                function drawDrizzle() {
+                    ctx.save();
+                    for (const d of drizzle) {
+                        const k = clamp01(1 - d.age / d.life);
+                        ctx.globalAlpha = 0.8 * k;
+                        ctx.strokeStyle = "#ffcf6b";
+                        ctx.lineWidth = 3;
+                        ctx.lineCap = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(d.x, d.y - 10);
+                        ctx.lineTo(d.x - d.vx * 0.03, d.y + 6);
+                        ctx.stroke();
+
+                        ctx.fillStyle = "#ffcf6b";
+                        ctx.beginPath();
+                        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        ctx.strokeStyle = ink;
+                        ctx.globalAlpha = 0.28 * k;
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                function roundRect(x, y, w, h, r) {
+                    ctx.beginPath();
+                    ctx.roundRect(x, y, w, h, r);
+                }
+
+                // --- Main loop
+                function loop(now) {
+                    const dt = Math.min(0.022, (now - t0) / 1000);
+                    t0 = now;
+                    time += dt;
+
+                    step(dt);
+                    draw();
+
+                    requestAnimationFrame(loop);
+                }
+
+                // Start
+                resize();
+                heatValEl.textContent = heatEl.value + "%";
+
+                // Drop a little initial set to show life
+                setTimeout(() => dropKernels(machine.x + machine.w * 0.5), 250);
+
+                requestAnimationFrame(loop);
+
+                // A tiny UX: space toggles door
+                window.addEventListener("keydown", (e) => {
+                    if (e.code === "Space") {
+                        e.preventDefault();
+                        doorBtn.click();
+                    }
+                    if (e.key.toLowerCase() === "r") resetBtn.click();
+                });
+            })();
+        </script>
+    </body>
+</html>
